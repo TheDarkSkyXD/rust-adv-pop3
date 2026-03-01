@@ -2,6 +2,17 @@
 
 Calculate the next decimal phase number for urgent insertions.
 
+## Prerequisites
+
+All commands in this reference must be executed from the repository root directory:
+
+```bash
+# Verify you're in the repo root
+ls .claude/get-shit-done/bin/gsd-tools.cjs
+```
+
+If the file doesn't exist, navigate to your repository root before running these commands.
+
 ## Using gsd-tools
 
 ```bash

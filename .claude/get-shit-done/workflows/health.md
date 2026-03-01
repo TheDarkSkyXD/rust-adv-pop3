@@ -21,6 +21,18 @@ fi
 ```
 </step>
 
+<step name="validate_execution_context">
+**Validate execution context:**
+
+```bash
+if [ ! -f ".claude/get-shit-done/bin/gsd-tools.cjs" ]; then
+  echo "Error: Health check must run from repository root"
+  echo "Current directory: $(pwd)"
+  exit 1
+fi
+```
+</step>
+
 <step name="run_health_check">
 **Run health validation:**
 
