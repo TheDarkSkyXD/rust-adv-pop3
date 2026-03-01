@@ -2,10 +2,8 @@ use pop3::{Pop3Client, TlsMode};
 
 fn main() -> pop3::Result<()> {
     // Connect to a POP3 server over TLS
-    let mut client = Pop3Client::connect(
-        ("pop.gmail.com", 995),
-        TlsMode::Tls("pop.gmail.com".into()),
-    )?;
+    let mut client =
+        Pop3Client::connect(("pop.gmail.com", 995), TlsMode::Tls("pop.gmail.com".into()))?;
     println!("Greeting: {}", client.greeting());
 
     // Authenticate

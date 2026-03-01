@@ -4,9 +4,7 @@ use crate::types::{Capability, ListEntry, Stat, UidlEntry};
 /// Parse a POP3 status line, returning the text after `+OK` or an error for `-ERR`.
 pub(crate) fn parse_status_line(line: &str) -> Result<&str> {
     let line = line.trim_end_matches("\r\n").trim_end_matches('\n');
-    if line.starts_with("+OK")
-        && (line.len() == 3 || line.as_bytes()[3].is_ascii_whitespace())
-    {
+    if line.starts_with("+OK") && (line.len() == 3 || line.as_bytes()[3].is_ascii_whitespace()) {
         Ok(line[3..].trim_start())
     } else if line.starts_with("-ERR")
         && (line.len() == 4 || line.as_bytes()[4].is_ascii_whitespace())
