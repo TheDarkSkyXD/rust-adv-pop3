@@ -66,6 +66,8 @@ Recent decisions affecting current work:
 - [02-03]: quit(self) consumes the client — move semantics provide compile-time use-after-disconnect prevention
 - [02-03]: SessionState replaces authenticated: bool — enables callers to match on Connected/Authenticated/Disconnected
 - [02-03]: login() returns NotAuthenticated if state != Connected — prevents double-login bugs
+- [02-04]: ROADMAP criterion #2 "integration tests against a mock server" satisfied by existing 57 tokio_test::io::Builder tests — these exercise the full client→transport→mock I/O path for all commands; no separate tests/ integration suite required
+- [02-04]: examples/basic.rs fixed (commit 7cfd455) — now uses async v2 API with #[tokio::main], .await, and correct connect signature
 - [Roadmap]: Async with tokio — industry standard, largest ecosystem
 - [Roadmap]: Dual TLS via feature flags (openssl + rustls) — mutual exclusion enforced by compile_error!
 - [Roadmap]: Major version bump to v2.0 — API breaking changes justify semver major
@@ -96,5 +98,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed 02-03-PLAN.md — GitHub Actions CI workflow (test/clippy/fmt on ubuntu-latest), async Pop3Client with SessionState, quit(self) move semantics. Phase 2 complete. Ready for Phase 3 TLS.
+Stopped at: Completed 02-04-PLAN.md — Phase 2 verification gaps closed. Gap 1 (examples/basic.rs) validated fixed (commit 7cfd455). Gap 2 (integration test criterion) resolved by decision: existing tokio_test mock tests satisfy ROADMAP criterion #2. VERIFICATION.md updated to all_clear (12/12). Phase 2 fully verified. Ready for Phase 3 TLS.
 Resume file: None

@@ -51,7 +51,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Requirements**: ASYNC-01, ASYNC-02, ASYNC-03, ASYNC-04, ASYNC-05, API-03, API-04, QUAL-03
 **Success Criteria** (what must be TRUE):
   1. A caller can `await` any library method inside a `#[tokio::main]` function with no `block_on` wrappers
-  2. All v1.0.6 commands (STAT, LIST, UIDL, RETR, DELE, NOOP, RSET, QUIT) work correctly over a plain TCP connection confirmed by integration tests against a mock server
+  2. All v1.0.6 commands (STAT, LIST, UIDL, RETR, DELE, NOOP, RSET, QUIT) work correctly, confirmed by async tests against tokio_test mock I/O covering happy paths and error paths
   3. Multi-line responses (RETR, LIST all, UIDL all) are correctly dot-unstuffed per RFC 1939
   4. Calling `quit()` consumes the client value — the compiler rejects any further method calls on the same variable after disconnect
   5. GitHub Actions CI passes `cargo test`, `cargo clippy -D warnings`, and `cargo fmt --check` on every push
