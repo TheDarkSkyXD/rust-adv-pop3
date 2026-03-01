@@ -40,8 +40,8 @@ Requirements for v2.0 release. Each maps to roadmap phases.
 
 ### POP3 Commands
 
-- [ ] **CMD-01**: User can retrieve message headers + N lines via TOP command
-- [ ] **CMD-02**: User can query server capabilities via CAPA command
+- [x] **CMD-01**: User can retrieve message headers + N lines via TOP command
+- [x] **CMD-02**: User can query server capabilities via CAPA command
 - [ ] **CMD-03**: User can authenticate via APOP (with documented MD5 security caveat)
 - [ ] **CMD-04**: Server RESP-CODES are parsed into structured `Pop3Error` variants
 
@@ -55,7 +55,7 @@ Requirements for v2.0 release. Each maps to roadmap phases.
 ### Quality
 
 - [x] **QUAL-01**: Unit tests cover all response parsing functions via mock I/O
-- [ ] **QUAL-02**: Integration tests cover connect, auth, and command flows via mock POP3 server
+- [x] **QUAL-02**: Integration tests cover connect, auth, and command flows via mock POP3 server
 - [x] **QUAL-03**: GitHub Actions CI runs tests, clippy, and format checks
 - [ ] **QUAL-04**: CI matrix tests both `rustls-tls` and `openssl-tls` feature flags
 - [ ] **QUAL-05**: All public items have rustdoc with working doctests
@@ -151,9 +151,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TLS-04 | Phase 3 | Pending |
 | TLS-05 | Phase 3 | Pending |
 | TLS-06 | Phase 3 | Pending |
-| CMD-01 | Phase 3 | Pending |
-| CMD-02 | Phase 3 | Pending |
-| QUAL-02 | Phase 3 | Pending |
+| CMD-01 | Phase 3 | Complete (03-03) |
+| CMD-02 | Phase 3 | Complete (03-03) |
+| QUAL-02 | Phase 3 | Complete (03-03) |
 | QUAL-04 | Phase 3 | Pending |
 | QUAL-05 | Phase 3 | Pending |
 | CMD-03 | Phase 4 | Pending |

@@ -2,26 +2,13 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: milestone
-status: unknown
-last_updated: "2026-03-01T21:26:52.240Z"
+status: in_progress
+last_updated: "2026-03-01T22:16:00.000Z"
 progress:
-  total_phases: 2
+  total_phases: 9
   completed_phases: 2
-  total_plans: 6
-  completed_plans: 6
----
-
----
-gsd_state_version: 1.0
-milestone: v2.0
-milestone_name: milestone
-status: unknown
-last_updated: "2026-03-01T21:24:00.000Z"
-progress:
-  total_phases: 2
-  completed_phases: 2
-  total_plans: 6
-  completed_plans: 6
+  total_plans: 9
+  completed_plans: 9
 ---
 
 # Project State
@@ -31,23 +18,23 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-01)
 
 **Core value:** Provide a correct, async, production-quality POP3 client that handles errors gracefully instead of panicking
-**Current focus:** Phase 2 — Async Core (complete)
+**Current focus:** Phase 3 — TLS and Publish (plan 03 of 04 complete)
 
 ## Current Position
 
-Phase: 2 of 9 (Async Core)
-Plan: 4 of 4 in current phase (COMPLETE)
-Status: Phase 2 fully verified — ready for Phase 3
-Last activity: 2026-03-01 — Completed 02-04 (Phase 2 gap closure, VERIFICATION.md all_clear 12/12)
+Phase: 3 of 9 (TLS and Publish)
+Plan: 3 of 4 in current phase
+Status: Phase 3 plan 03 complete — integration tests added, ready for plan 04 (publish)
+Last activity: 2026-03-01 — Completed 03-03 (integration tests: multi-command flows + TcpListener public API tests)
 
-Progress: [████░░░░░░] 22%
+Progress: [████░░░░░░] 25%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 6
-- Average duration: ~13 min
-- Total execution time: ~80 min
+- Total plans completed: 9
+- Average duration: ~9 min
+- Total execution time: ~84 min
 
 **By Phase:**
 
@@ -55,10 +42,11 @@ Progress: [████░░░░░░] 22%
 |-------|-------|-------|----------|
 | 01-foundation | 2 | 40 min | 20 min |
 | 02-async-core | 4 | ~40 min | ~10 min |
+| 03-tls-and-publish | 3 so far | ~4 min so far | ~4 min |
 
 **Recent Trend:**
-- Last 5 plans: 15 min, ~20 min, ~11 min, 4 min, ~5 min
-- Trend: accelerating
+- Last 5 plans: ~11 min, 4 min, ~5 min, ~4 min, 4 min
+- Trend: consistently fast (4-5 min range)
 
 *Updated after each plan completion*
 
@@ -81,6 +69,9 @@ Recent decisions affecting current work:
 - [02-03]: login() returns NotAuthenticated if state != Connected — prevents double-login bugs
 - [02-04]: ROADMAP criterion #2 "integration tests against a mock server" satisfied by existing 57 tokio_test::io::Builder tests — these exercise the full client→transport→mock I/O path for all commands; no separate tests/ integration suite required
 - [02-04]: examples/basic.rs fixed (commit 7cfd455) — now uses async v2 API with #[tokio::main], .await, and correct connect signature
+- [03-03]: Mock server uses BufReader::read_line() to read one CRLF-terminated command at a time — prevents TCP coalescing causing empty reads on Windows
+- [03-03]: Integration tests split: tests/integration.rs for true public-API-over-TCP tests; src/client.rs for multi-command flows using internal mock infrastructure
+- [03-03]: is_encrypted() added as public method on Pop3Client (delegates to Transport::is_encrypted) to satisfy public API interface spec
 - [Roadmap]: Async with tokio — industry standard, largest ecosystem
 - [Roadmap]: Dual TLS via feature flags (openssl + rustls) — mutual exclusion enforced by compile_error!
 - [Roadmap]: Major version bump to v2.0 — API breaking changes justify semver major
@@ -107,9 +98,10 @@ None yet.
 - [Phase 8]: bb8 per-account exclusivity enforcement — decide whether each Pop3Pool targets one account (single builder per pool) or supports multi-account with runtime enforcement. Public API decision; resolve before Phase 8 begins.
 - [Phase 8]: bb8::ManageConnection async fn in traits — verify whether bb8 0.9 supports native async fn in impls (Rust 1.75+) or requires #[async_trait] macro. Check before Phase 8 planning.
 - [Phase 9]: Dot-unstuffing precondition — RESOLVED in 01-02: retr_dot_unstuffing test confirms end-to-end dot-unstuffing works. Phase 9 entry gate satisfied.
+- [Environment]: Windows MSVC linker (link.exe) fails when compiling C-using build scripts (ring, getrandom, rustls). Pure-Rust tests and cargo check work fine. cargo clippy requires full recompile when cache is stale — may fail with linker error. This is a pre-existing environment constraint.
 
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed 02-04-PLAN.md — Phase 2 verification gaps closed. Gap 1 (examples/basic.rs) validated fixed (commit 7cfd455). Gap 2 (integration test criterion) resolved by decision: existing tokio_test mock tests satisfy ROADMAP criterion #2. VERIFICATION.md updated to all_clear (12/12). Phase 2 fully verified. Ready for Phase 3 TLS.
+Stopped at: Completed 03-03-PLAN.md — integration tests created. 3 multi-command flow tests in src/client.rs, tests/integration.rs with TcpListener mock server (2 tests). All 64 tests pass (62 unit + 2 integration). Ready for Phase 3 plan 04 (publish preparation / doctests / Cargo.toml).
 Resume file: None
