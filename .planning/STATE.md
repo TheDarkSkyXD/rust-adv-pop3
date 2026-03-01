@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: milestone
 status: in_progress
-last_updated: "2026-03-01T22:16:00.000Z"
+last_updated: "2026-03-01T22:30:00.000Z"
 progress:
   total_phases: 9
   completed_phases: 2
-  total_plans: 9
-  completed_plans: 9
+  total_plans: 10
+  completed_plans: 7
 ---
 
 # Project State
@@ -18,23 +18,23 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-01)
 
 **Core value:** Provide a correct, async, production-quality POP3 client that handles errors gracefully instead of panicking
-**Current focus:** Phase 3 — TLS and Publish (plan 03 of 04 complete)
+**Current focus:** Phase 3 — TLS and Publish (plan 01 of 04 complete)
 
 ## Current Position
 
 Phase: 3 of 9 (TLS and Publish)
-Plan: 3 of 4 in current phase
-Status: Phase 3 plan 03 complete — integration tests added, ready for plan 04 (publish)
-Last activity: 2026-03-01 — Completed 03-03 (integration tests: multi-command flows + TcpListener public API tests)
+Plan: 1 of 4 in current phase (just completed)
+Status: Phase 3 plan 01 complete — TLS foundation (InnerStream enum, feature flags, rustls connect_tls, Pop3Client TLS methods, STARTTLS scaffolding forward-ported)
+Last activity: 2026-03-01 — Completed 03-01 (TLS foundation: InnerStream enum, tokio-rustls 0.26 with ring backend, Pop3Client::connect_tls/connect_tls_default/is_encrypted/stls() methods)
 
-Progress: [████░░░░░░] 25%
+Progress: [███░░░░░░░] 22%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 9
-- Average duration: ~9 min
-- Total execution time: ~84 min
+- Total plans completed: 7
+- Average duration: ~10 min
+- Total execution time: ~87 min
 
 **By Phase:**
 
@@ -42,11 +42,11 @@ Progress: [████░░░░░░] 25%
 |-------|-------|-------|----------|
 | 01-foundation | 2 | 40 min | 20 min |
 | 02-async-core | 4 | ~40 min | ~10 min |
-| 03-tls-and-publish | 3 so far | ~4 min so far | ~4 min |
+| 03-tls-and-publish | 1 completed | ~7 min | ~7 min |
 
 **Recent Trend:**
-- Last 5 plans: ~11 min, 4 min, ~5 min, ~4 min, 4 min
-- Trend: consistently fast (4-5 min range)
+- Last 5 plans: 4 min, ~5 min, ~4 min, 4 min, ~7 min
+- Trend: consistently fast (4-7 min range)
 
 *Updated after each plan completion*
 
@@ -67,8 +67,13 @@ Recent decisions affecting current work:
 - [02-03]: quit(self) consumes the client — move semantics provide compile-time use-after-disconnect prevention
 - [02-03]: SessionState replaces authenticated: bool — enables callers to match on Connected/Authenticated/Disconnected
 - [02-03]: login() returns NotAuthenticated if state != Connected — prevents double-login bugs
-- [02-04]: ROADMAP criterion #2 "integration tests against a mock server" satisfied by existing 57 tokio_test::io::Builder tests — these exercise the full client→transport→mock I/O path for all commands; no separate tests/ integration suite required
+- [02-04]: ROADMAP criterion #2 "integration tests against a mock server" satisfied by existing 57 tokio_test::io::Builder tests — these exercise the full client->transport->mock I/O path for all commands; no separate tests/ integration suite required
 - [02-04]: examples/basic.rs fixed (commit 7cfd455) — now uses async v2 API with #[tokio::main], .await, and correct connect signature
+- [03-01]: Use ring crypto backend for tokio-rustls (not aws-lc-rs default) — aws-lc-sys requires dlltool.exe on Windows; ring builds cleanly everywhere
+- [03-01]: Box<TlsStream<TcpStream>> in InnerStream::RustlsTls — reduces enum size from 1104 bytes to pointer size, satisfies clippy::large_enum_variant
+- [03-01]: compile_error! positioned after //! crate doc block — inner doc comments must precede all items including #[cfg(...)]
+- [03-01]: Pop3Error::Tls(String) replaces #[from] rustls::Error — backend-agnostic, no rustls type in public API
+- [03-01]: Upgrading variant added to InnerStream for STARTTLS placeholder swap — upgrade_in_place forward-ported from Plan 02
 - [03-03]: Mock server uses BufReader::read_line() to read one CRLF-terminated command at a time — prevents TCP coalescing causing empty reads on Windows
 - [03-03]: Integration tests split: tests/integration.rs for true public-API-over-TCP tests; src/client.rs for multi-command flows using internal mock infrastructure
 - [03-03]: is_encrypted() added as public method on Pop3Client (delegates to Transport::is_encrypted) to satisfy public API interface spec
@@ -92,6 +97,7 @@ None yet.
 
 ### Blockers/Concerns
 
+- [Phase 3]: OpenSSL connect_tls forward-ported but not tested — validate on Linux/macOS in Phase 3 plan 02.
 - [Phase 3]: OpenSSL build on Windows CI is documented as problematic — may need `vendored` feature or limit openssl support to Linux/macOS. Decide in Phase 3.
 - [Phase 4]: STARTTLS BufReader drain behavior is under-documented in tokio ecosystem. Validate against Outlook and Gmail (known to coalesce TCP segments) during Phase 4, not just mock server.
 - [Phase 5]: Windowed pipeline implementation — PITFALLS.md specifies 4-8 command window but exact interleave mechanism (select! vs. send/drain interleave) should be prototyped before final design. Resolve in Phase 5 planning.
@@ -103,5 +109,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed 03-03-PLAN.md — integration tests created. 3 multi-command flow tests in src/client.rs, tests/integration.rs with TcpListener mock server (2 tests). All 64 tests pass (62 unit + 2 integration). Ready for Phase 3 plan 04 (publish preparation / doctests / Cargo.toml).
+Stopped at: Completed 03-01-PLAN.md — TLS foundation complete. InnerStream enum, feature flags (rustls-tls default, openssl-tls optional), tokio-rustls 0.26 with ring backend, Pop3Client::connect_tls/connect_tls_default/is_encrypted/stls() methods. upgrade_in_place STARTTLS method forward-ported. All 76 tests pass (66 unit + 2 integration + 8 doc). Ready for Phase 3 plan 02 (STARTTLS).
 Resume file: None

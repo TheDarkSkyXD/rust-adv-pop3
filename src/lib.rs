@@ -34,17 +34,16 @@
 //!
 //! ## TLS Connections
 //!
-//! Connect directly over TLS (port 995):
+//! Connect directly over TLS — port 995, requires `rustls-tls` (default) or `openssl-tls`:
 //!
-//! ```no_run
+//! ```ignore
 //! use pop3::Pop3Client;
 //!
 //! #[tokio::main]
 //! async fn main() -> pop3::Result<()> {
-//!     let mut client = Pop3Client::connect_tls(
+//!     let mut client = Pop3Client::connect_tls_default(
 //!         ("pop.gmail.com", 995),
 //!         "pop.gmail.com",
-//!         std::time::Duration::from_secs(30),
 //!     ).await?;
 //!     client.login("user@gmail.com", "app-password").await?;
 //!     client.quit().await?;
@@ -54,9 +53,9 @@
 //!
 //! ## STARTTLS (Upgrade Plain to TLS)
 //!
-//! Connect over plain TCP then upgrade to TLS before authenticating:
+//! Connect over plain TCP then upgrade to TLS — requires `rustls-tls` (default) or `openssl-tls`:
 //!
-//! ```no_run
+//! ```ignore
 //! use pop3::Pop3Client;
 //!
 //! #[tokio::main]

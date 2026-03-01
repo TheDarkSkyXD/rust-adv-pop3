@@ -224,7 +224,8 @@ impl Pop3Client {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
+    /// // Requires rustls-tls (default) or openssl-tls feature.
     /// use pop3::Pop3Client;
     ///
     /// #[tokio::main]
@@ -363,8 +364,37 @@ impl Pop3Client {
         response::parse_stat(&text)
     }
 
-    /// List messages. If `message_id` is `Some`, returns info for that message only.
-    /// If `None`, returns info for all messages.
+    /// List messages with their sizes.
+    ///
+    /// - `Some(id)` — returns size info for the single message with that number
+    /// - `None` — returns a list of all messages with their sizes
+    ///
+    /// Message numbers start at 1 per RFC 1939.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///
+    ///     // List all messages
+    ///     let all = client.list(None).await?;
+    ///     for entry in &all {
+    ///         println!("Message {}: {} bytes", entry.message_id, entry.size);
+    ///     }
+    ///
+    ///     // List a single message
+    ///     let single = client.list(Some(1)).await?;
+    ///     println!("Message 1 is {} bytes", single[0].size);
+    ///
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn list(&mut self, message_id: Option<u32>) -> Result<Vec<ListEntry>> {
         self.require_auth()?;
         match message_id {
@@ -382,8 +412,33 @@ impl Pop3Client {
         }
     }
 
-    /// Get unique IDs for messages. If `message_id` is `Some`, returns the UID for that
-    /// message only. If `None`, returns UIDs for all messages.
+    /// Get unique IDs (UIDs) for messages.
+    ///
+    /// UIDs are stable across sessions — use them to detect which messages were
+    /// already downloaded, even after the server renumbers messages.
+    ///
+    /// - `Some(id)` — returns the UID for the single message with that number
+    /// - `None` — returns UIDs for all messages
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///
+    ///     let uids = client.uidl(None).await?;
+    ///     for entry in &uids {
+    ///         println!("Message {}: UID {}", entry.message_id, entry.unique_id);
+    ///     }
+    ///
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn uidl(&mut self, message_id: Option<u32>) -> Result<Vec<UidlEntry>> {
         self.require_auth()?;
         match message_id {
@@ -401,7 +456,27 @@ impl Pop3Client {
         }
     }
 
-    /// Retrieve a message by its message number.
+    /// Retrieve a full message by its message number.
+    ///
+    /// Returns the complete message content (headers + body) as a [`Message`].
+    /// Dot-unstuffing is applied per RFC 1939 — double-leading dots are reduced
+    /// to single dots.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///     let msg = client.retr(1).await?;
+    ///     println!("{}", msg.data);
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn retr(&mut self, message_id: u32) -> Result<Message> {
         self.require_auth()?;
         validate_message_id(message_id)?;
@@ -411,6 +486,25 @@ impl Pop3Client {
     }
 
     /// Mark a message for deletion.
+    ///
+    /// The message is not immediately deleted — it is removed when the session
+    /// ends via [`quit`](Self::quit). Use [`rset`](Self::rset) to unmark
+    /// all pending deletions before `quit`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///     client.dele(1).await?; // mark message 1 for deletion
+    ///     client.quit().await?; // deletion is committed here
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn dele(&mut self, message_id: u32) -> Result<()> {
         self.require_auth()?;
         validate_message_id(message_id)?;
@@ -418,25 +512,82 @@ impl Pop3Client {
         Ok(())
     }
 
-    /// Reset the session — unmark all messages marked for deletion.
+    /// Reset the session, unmarking all messages that were marked for deletion.
+    ///
+    /// After `rset()`, no messages will be deleted when the session ends.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///     client.dele(1).await?;
+    ///     client.rset().await?; // cancel the deletion
+    ///     client.quit().await?; // message 1 is NOT deleted
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn rset(&mut self) -> Result<()> {
         self.require_auth()?;
         self.send_and_check("RSET").await?;
         Ok(())
     }
 
-    /// No-op, keeps the connection alive.
+    /// Send a no-op command to keep the connection alive.
+    ///
+    /// Useful for long-lived connections where the server may time out idle
+    /// sessions. The server replies with `+OK` and takes no other action.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///     client.noop().await?; // keepalive ping
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn noop(&mut self) -> Result<()> {
         self.require_auth()?;
         self.send_and_check("NOOP").await?;
         Ok(())
     }
 
-    /// End the session. Messages marked for deletion are removed.
+    /// End the session, committing any pending deletions.
     ///
-    /// This method consumes the client, preventing any further use.
-    /// If the caller drops the client without calling quit(), the TCP
-    /// connection closes silently and pending DELE marks are NOT committed.
+    /// This method **consumes** `self`, providing a compile-time guarantee that
+    /// no further commands can be issued after the session ends.
+    ///
+    /// Messages marked for deletion via [`dele`](Self::dele) are permanently
+    /// removed when `quit` completes. Call [`rset`](Self::rset) before `quit`
+    /// to cancel all pending deletions.
+    ///
+    /// Dropping a `Pop3Client` without calling `quit()` closes the TCP connection
+    /// silently — pending `DELE` marks are **not** committed.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///     client.quit().await?;
+    ///     // client is consumed — no further use is possible
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn quit(self) -> Result<()> {
         let mut this = self;
         this.transport.send_command("QUIT").await?;
@@ -447,6 +598,25 @@ impl Pop3Client {
     }
 
     /// Retrieve the headers and the first `lines` lines of a message body.
+    ///
+    /// Useful for previewing messages without downloading the full content.
+    /// Pass `lines = 0` to retrieve only the headers.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///     let preview = client.top(1, 5).await?; // headers + 5 body lines
+    ///     println!("{}", preview.data);
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn top(&mut self, message_id: u32, lines: u32) -> Result<Message> {
         self.require_auth()?;
         validate_message_id(message_id)?;
@@ -456,7 +626,28 @@ impl Pop3Client {
         Ok(Message { data })
     }
 
-    /// Query server capabilities.
+    /// Query the server for its supported capabilities (RFC 2449).
+    ///
+    /// Returns a list of [`Capability`] items. Common capabilities include
+    /// `TOP`, `UIDL`, `SASL`, and `STLS`. This command is permitted before
+    /// authentication.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     let caps = client.capa().await?;
+    ///     for cap in &caps {
+    ///         println!("{}: {:?}", cap.name, cap.arguments);
+    ///     }
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn capa(&mut self) -> Result<Vec<Capability>> {
         self.send_and_check("CAPA").await?;
         let body = self.transport.read_multiline().await?;
