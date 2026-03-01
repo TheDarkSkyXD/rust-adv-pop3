@@ -19,6 +19,12 @@ enum InnerStream {
     OpensslTls(tokio_openssl::SslStream<TcpStream>),
     #[cfg(test)]
     Mock(tokio_test::io::Mock),
+    /// Temporary placeholder during STARTTLS upgrade (Plan 02). Never performs real I/O;
+    /// this variant exists only transiently inside upgrade_in_place and is immediately
+    /// replaced by the TLS variant before the method returns.
+    #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+    #[allow(dead_code)]
+    Upgrading,
 }
 
 impl AsyncRead for InnerStream {
@@ -35,6 +41,11 @@ impl AsyncRead for InnerStream {
             InnerStream::OpensslTls(s) => Pin::new(s).poll_read(cx, buf),
             #[cfg(test)]
             InnerStream::Mock(s) => Pin::new(s).poll_read(cx, buf),
+            #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+            InnerStream::Upgrading => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "stream is upgrading to TLS",
+            ))),
         }
     }
 }
@@ -53,6 +64,11 @@ impl AsyncWrite for InnerStream {
             InnerStream::OpensslTls(s) => Pin::new(s).poll_write(cx, buf),
             #[cfg(test)]
             InnerStream::Mock(s) => Pin::new(s).poll_write(cx, buf),
+            #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+            InnerStream::Upgrading => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "stream is upgrading to TLS",
+            ))),
         }
     }
 
@@ -65,6 +81,11 @@ impl AsyncWrite for InnerStream {
             InnerStream::OpensslTls(s) => Pin::new(s).poll_flush(cx),
             #[cfg(test)]
             InnerStream::Mock(s) => Pin::new(s).poll_flush(cx),
+            #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+            InnerStream::Upgrading => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "stream is upgrading to TLS",
+            ))),
         }
     }
 
@@ -77,6 +98,11 @@ impl AsyncWrite for InnerStream {
             InnerStream::OpensslTls(s) => Pin::new(s).poll_shutdown(cx),
             #[cfg(test)]
             InnerStream::Mock(s) => Pin::new(s).poll_shutdown(cx),
+            #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+            InnerStream::Upgrading => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "stream is upgrading to TLS",
+            ))),
         }
     }
 }
@@ -168,6 +194,112 @@ impl Transport {
     /// Returns `true` if the connection is encrypted via TLS.
     pub(crate) fn is_encrypted(&self) -> bool {
         self.encrypted
+    }
+
+    /// Upgrade a plain TCP connection to TLS in-place (STARTTLS).
+    ///
+    /// Verifies the BufReader buffer is empty before upgrading. Uses the
+    /// `Upgrading` placeholder variant to safely swap the halves, recovers the
+    /// original `TcpStream` via `unsplit()`, performs a TLS handshake, then
+    /// rebuilds `reader` and `writer` with the new TLS stream.
+    #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+    pub(crate) async fn upgrade_in_place(&mut self, hostname: &str) -> Result<()> {
+        let pending = self.reader.buffer().len();
+        if pending > 0 {
+            return Err(Pop3Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unexpected {} bytes in buffer before TLS upgrade", pending),
+            )));
+        }
+
+        if self.encrypted {
+            return Err(Pop3Error::Tls(
+                "connection is already encrypted".to_string(),
+            ));
+        }
+
+        let (placeholder_read, placeholder_write) = io::split(InnerStream::Upgrading);
+
+        let old_reader = std::mem::replace(&mut self.reader, BufReader::new(placeholder_read));
+        let old_writer = std::mem::replace(&mut self.writer, placeholder_write);
+
+        let read_half = old_reader.into_inner();
+        let inner_stream = read_half.unsplit(old_writer);
+
+        let tcp_stream = match inner_stream {
+            InnerStream::Plain(tcp) => tcp,
+            _ => {
+                return Err(Pop3Error::Tls(
+                    "upgrade_in_place requires a plain TCP connection".to_string(),
+                ));
+            }
+        };
+
+        let tls_inner = Self::tls_handshake(tcp_stream, hostname).await?;
+
+        let (new_read, new_write) = io::split(tls_inner);
+        self.reader = BufReader::new(new_read);
+        self.writer = new_write;
+        self.encrypted = true;
+
+        Ok(())
+    }
+
+    #[cfg(feature = "rustls-tls")]
+    async fn tls_handshake(tcp_stream: TcpStream, hostname: &str) -> Result<InnerStream> {
+        use std::sync::Arc;
+        use tokio_rustls::rustls::{ClientConfig, RootCertStore};
+        use tokio_rustls::TlsConnector;
+
+        let server_name =
+            tokio_rustls::rustls::pki_types::ServerName::try_from(hostname.to_owned())
+                .map_err(|e| Pop3Error::InvalidDnsName(e.to_string()))?;
+
+        let native_certs = rustls_native_certs::load_native_certs();
+        let mut root_store = RootCertStore::empty();
+        for cert in native_certs.certs {
+            root_store
+                .add(cert)
+                .map_err(|e| Pop3Error::Tls(e.to_string()))?;
+        }
+
+        let config = ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        let connector = TlsConnector::from(Arc::new(config));
+
+        let tls_stream = connector
+            .connect(server_name, tcp_stream)
+            .await
+            .map_err(|e| Pop3Error::Tls(e.to_string()))?;
+
+        Ok(InnerStream::RustlsTls(Box::new(tls_stream)))
+    }
+
+    #[cfg(feature = "openssl-tls")]
+    async fn tls_handshake(tcp_stream: TcpStream, hostname: &str) -> Result<InnerStream> {
+        use openssl::ssl::{SslConnector, SslMethod};
+        use tokio_openssl::SslStream;
+
+        let connector = SslConnector::builder(SslMethod::tls())
+            .map_err(|e| Pop3Error::Tls(e.to_string()))?
+            .build();
+
+        let ssl = connector
+            .configure()
+            .map_err(|e| Pop3Error::Tls(e.to_string()))?
+            .into_ssl(hostname)
+            .map_err(|e| Pop3Error::Tls(e.to_string()))?;
+
+        let mut tls_stream =
+            SslStream::new(ssl, tcp_stream).map_err(|e| Pop3Error::Tls(e.to_string()))?;
+
+        std::pin::Pin::new(&mut tls_stream)
+            .connect()
+            .await
+            .map_err(|e| Pop3Error::Tls(e.to_string()))?;
+
+        Ok(InnerStream::OpensslTls(tls_stream))
     }
 
     /// Send a command to the server (appends CRLF).
