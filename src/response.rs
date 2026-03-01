@@ -4,10 +4,14 @@ use crate::types::{Capability, ListEntry, Stat, UidlEntry};
 /// Parse a POP3 status line, returning the text after `+OK` or an error for `-ERR`.
 pub(crate) fn parse_status_line(line: &str) -> Result<&str> {
     let line = line.trim_end_matches("\r\n").trim_end_matches('\n');
-    if let Some(rest) = line.strip_prefix("+OK") {
-        Ok(rest.trim_start())
-    } else if let Some(rest) = line.strip_prefix("-ERR") {
-        Err(Pop3Error::ServerError(rest.trim_start().to_string()))
+    if line.starts_with("+OK")
+        && (line.len() == 3 || line.as_bytes()[3].is_ascii_whitespace())
+    {
+        Ok(line[3..].trim_start())
+    } else if line.starts_with("-ERR")
+        && (line.len() == 4 || line.as_bytes()[4].is_ascii_whitespace())
+    {
+        Err(Pop3Error::ServerError(line[4..].trim_start().to_string()))
     } else {
         Err(Pop3Error::Parse(format!("unexpected response: {line}")))
     }
@@ -101,6 +105,7 @@ pub(crate) fn parse_uidl_single(status_text: &str) -> Result<UidlEntry> {
 /// Parse a CAPA response body into a list of capabilities.
 pub(crate) fn parse_capa(body: &str) -> Vec<Capability> {
     body.lines()
+        .map(str::trim)
         .filter(|line| !line.is_empty())
         .map(|line| {
             let mut parts = line.split_whitespace();
@@ -236,6 +241,37 @@ mod tests {
     fn test_parse_capa_empty() {
         let caps = parse_capa("");
         assert!(caps.is_empty());
+    }
+
+    #[test]
+    fn test_parse_status_rejects_okay() {
+        // "+OKAY" should not match "+OK"
+        let result = parse_status_line("+OKAY\r\n");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Pop3Error::Parse(_) => {}
+            e => panic!("unexpected error: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_status_rejects_error() {
+        // "-ERROR" should not match "-ERR"
+        let result = parse_status_line("-ERROR\r\n");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Pop3Error::Parse(_) => {}
+            e => panic!("unexpected error: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_capa_whitespace_only_lines() {
+        let body = "TOP\n   \nUIDL\n";
+        let caps = parse_capa(body);
+        assert_eq!(caps.len(), 2);
+        assert_eq!(caps[0].name, "TOP");
+        assert_eq!(caps[1].name, "UIDL");
     }
 
     #[test]

@@ -1,11 +1,15 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
+use std::time::Duration;
 
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, StreamOwned};
 
 use crate::error::{Pop3Error, Result};
+
+/// Default socket timeout for read/write operations (30 seconds).
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 enum Stream {
     Plain(BufReader<TcpStream>),
@@ -16,10 +20,18 @@ pub(crate) struct Transport {
     stream: Stream,
 }
 
+/// Set read/write timeouts on a TCP stream.
+fn set_timeouts(tcp: &TcpStream, timeout: Duration) -> Result<()> {
+    tcp.set_read_timeout(Some(timeout))?;
+    tcp.set_write_timeout(Some(timeout))?;
+    Ok(())
+}
+
 impl Transport {
     /// Connect over plain TCP.
     pub(crate) fn connect_plain(addr: impl ToSocketAddrs) -> Result<Self> {
         let tcp = TcpStream::connect(addr)?;
+        set_timeouts(&tcp, DEFAULT_TIMEOUT)?;
         Ok(Transport {
             stream: Stream::Plain(BufReader::new(tcp)),
         })
@@ -28,11 +40,26 @@ impl Transport {
     /// Connect over TLS using rustls with native certificate roots.
     pub(crate) fn connect_tls(addr: impl ToSocketAddrs, hostname: &str) -> Result<Self> {
         let tcp = TcpStream::connect(addr)?;
+        set_timeouts(&tcp, DEFAULT_TIMEOUT)?;
 
         let certs = rustls_native_certs::load_native_certs();
+
+        // Log any certificate loading errors but continue with whatever certs loaded
+        if !certs.errors.is_empty() && certs.certs.is_empty() {
+            return Err(Pop3Error::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!(
+                    "failed to load any native certificates: {}",
+                    certs.errors[0]
+                ),
+            )));
+        }
+
         let mut root_store = rustls::RootCertStore::empty();
         for cert in certs.certs {
-            let _ = root_store.add(cert);
+            root_store
+                .add(cert)
+                .map_err(|e| Pop3Error::Parse(format!("invalid certificate: {e}")))?;
         }
 
         let config = ClientConfig::builder()
