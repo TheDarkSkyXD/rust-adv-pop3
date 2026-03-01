@@ -2,231 +2,373 @@
 
 **Domain:** Async Rust network protocol client library (POP3)
 **Researched:** 2026-03-01
-**Confidence:** HIGH
+**Confidence:** HIGH (core new crates), MEDIUM (pipelining internal design)
 
 ---
 
-## Context: What Changes vs. What Stays
+## Context: Scope of This Document
 
-This is a milestone research file, not a greenfield project. The existing v1.0.6 codebase
-provides synchronous POP3 via `openssl` 0.10. The v2.0 rewrite replaces or wraps all of
-the following:
+This is a **milestone supplement** to the existing v2.0 STACK.md. v2.0 validated:
+- `tokio 1.49` — async runtime
+- `rustls 0.23` / `tokio-rustls 0.26` — rustls TLS backend
+- `openssl 0.10` / `tokio-openssl 0.6` — openssl TLS backend
+- `thiserror 2` — typed error enum
+- `regex 1` — response parsing
 
-| v1.0.6 (keep/drop) | v2.0 replacement |
-|--------------------|------------------|
-| `openssl = "0.10"` | keep, but behind `openssl` feature flag; add `tokio-openssl` |
-| `regex = "1"` | keep, same version |
-| `lazy_static = "1"` | DROP — use `std::sync::LazyLock` (stable since Rust 1.80) |
-| Rust 2015 edition | upgrade to Rust 2021 edition |
-| Synchronous `std::net::TcpStream` | `tokio::net::TcpStream` |
-| `std::io::BufReader` | `tokio::io::BufReader` |
-| `std::io::Result` return types | typed `Pop3Error` enum via `thiserror` |
+**Do not re-research or change any of the above.** This document answers only: what NEW crate
+dependencies are needed for v3.0 features (pipelining, UIDL caching, automatic reconnection
+with exponential backoff, connection pooling, and optional MIME integration)?
 
 ---
 
-## Recommended Stack
+## Summary: New Dependencies for v3.0
 
-### Core Technologies
+| v3.0 Feature | New Crate | Version |
+|---|---|---|
+| Exponential backoff reconnection | `backon` | 1.6 |
+| Connection pooling | `bb8` | 0.9 |
+| UIDL cache persistence (JSON) | `serde` + `serde_json` | 1.0 |
+| Optional MIME parsing | `mail-parser` | 0.11 (optional feature) |
+| Pipelining | No new crates — `std::collections::VecDeque` + existing `tokio` | — |
+
+**Net crate additions: 4 crates** (`backon`, `bb8`, `serde`, `serde_json`) plus one optional
+(`mail-parser`). No new tokio features beyond what v2.0 already requires.
+
+---
+
+## Recommended Stack Additions
+
+### Core Technologies Added in v3.0
 
 | Technology | Version | Purpose | Why Recommended |
 |------------|---------|---------|-----------------|
-| tokio | 1.49 | Async runtime: TCP sockets, buffered I/O, `#[tokio::test]` | Industry-standard Rust async runtime; largest ecosystem; `TcpStream`, `BufReader`, and `#[tokio::test]` are all in-tree. LTS 1.47.x supported until Sep 2026 (MSRV 1.70). |
-| openssl | 0.10.75 | System OpenSSL bindings for TLS | Already in v1.0.6. Keeps existing user expectations. Uses system OpenSSL so no extra compile step on Linux/macOS. Pin as optional behind `openssl` feature flag. |
-| tokio-openssl | 0.6.5 | Adapts `openssl::ssl::SslStream` to `AsyncRead + AsyncWrite` | Maintained by tokio-rs. Thin adapter — no new cryptographic code. Only required when `openssl` feature is active. |
-| rustls | 0.23.36 | Pure-Rust TLS implementation | No C dependencies; easy cross-compilation; MSRV 1.71. Use `ring` crypto provider (see note below) to avoid `aws-lc-rs` build complexity. Pin as optional behind `rustls` feature flag. |
-| tokio-rustls | 0.26.4 | Adapts `rustls` session to `AsyncRead + AsyncWrite` for tokio | Maintained by the rustls project itself. Matches `rustls 0.23.x`. |
-| thiserror | 2.0.18 | Derive macro for typed `Pop3Error` enum | Library-quality errors: matchable variants, no boilerplate, does not appear in the public API. Correct choice for libraries (vs. `anyhow` which is for applications). |
+| `backon` | 1.6 | Exponential backoff for automatic reconnection | Current-generation retry crate. `.retry(ExponentialBuilder::default()).await` integrates directly at async call sites without wrapper functions. The older `backoff` crate is unmaintained (RUSTSEC-2025-0012); `tokio-retry 0.3.0` is at 0.3 since 2021 and has a less ergonomic API. `backon` supports jitter, max\_delay, max\_times, and works on tokio without any feature flags. |
+| `bb8` | 0.9 | Connection pooling: pool of async POP3 connections | Designed for "any async connection type via `ManageConnection` trait." This is exactly the pattern needed: implement `ManageConnection` for the POP3 client struct to give bb8 create/validate/reclaim semantics. `deadpool` targets database-centric workloads; `mobc` adds more configuration complexity than needed. bb8 is the simplest fit for a custom async protocol. Version 0.9.1 is current. |
+| `serde` | 1.0 | Derive `Serialize`/`Deserialize` for UIDL cache struct | Framework-level serialization; zero runtime overhead via derive macros. Version 1.0.228 (2025). |
+| `serde_json` | 1.0 | Serialize UIDL cache to/from JSON on disk | Standard JSON backend for serde; 523K+ downloads; tokio-compatible (uses `tokio::fs` for async write, serde\_json for serialization in blocking task via `spawn_blocking`). Version 1.0.149 (2026-01-06). |
 
-### TLS Root Certificates (for `rustls` backend)
+### Optional Feature: MIME Parsing
 
 | Library | Version | Purpose | When to Use |
 |---------|---------|---------|-------------|
-| webpki-roots | 1.0.6 | Compiled-in Mozilla root CA bundle for rustls | Default choice; no OS interaction required; deterministic across platforms. Activate when `rustls` feature is enabled. |
-| rustls-native-certs | 0.8.1 | Use OS certificate store with rustls | Alternative for users who need corporate/private CAs. More complex; version 0.8.3 has a broken docs.rs build. Offer via a separate `rustls-native-certs` feature if desired in future; not needed for v2.0 MVP. |
+| `mail-parser` | 0.11 | Parse raw RFC 5322 + MIME message returned by RETR | Behind `mime` feature flag. Converts raw bytes from RETR into `Message` struct with `.text_bodies()`, `.html_bodies()`, `.attachments()`. 132K downloads; 0 external required dependencies (encoding\_rs is optional for CJK charsets). Has native `serde` feature flag for serializing parsed messages. |
 
-### Supporting Libraries
-
-| Library | Version | Purpose | When to Use |
-|---------|---------|---------|-------------|
-| tokio-test | 0.4.5 | Mock `AsyncRead + AsyncWrite` streams for unit tests | In-tree mock I/O; use `tokio_test::io::Builder` to replay byte sequences into the POP3 parser without a live server. Dev dependency only. |
-| regex | 1 (keep) | Parse POP3 response lines (STAT, LIST, UIDL) | Already present; no version bump needed. Replace `lazy_static!` wrappers with `std::sync::LazyLock`. |
-
-### Development Tools
-
-| Tool | Purpose | Notes |
-|------|---------|-------|
-| `cargo clippy` | Lint for common Rust mistakes | Run with `-D warnings` in CI; catches the `pub is_authenticated` issue, `unwrap()` chains, etc. |
-| `cargo fmt` (rustfmt) | Enforce consistent formatting | Stable toolchain includes it; run with `--check` in CI. |
-| `cargo test` | Run unit and integration tests | Use `#[tokio::test]` for async tests; `tokio-test` for mock I/O. |
-| GitHub Actions (`actions-rust-lang/setup-rust-toolchain@v1`) | CI pipeline | Current recommended action; handles toolchain, caching, and problem matchers for clippy/rustfmt output. Replaces broken Travis CI. |
+**Why `mail-parser` over `mailparse`:**
+- `mail-parser` provides a **flattened, human-friendly API** (`.text_bodies()`, `.html_bodies()`, `.attachments()`) vs. `mailparse`'s raw nested MIME tree — less work for the caller
+- Zero required external dependencies (100% safe Rust)
+- Supports 41 character sets including legacy CJK formats (encoding\_rs optional)
+- Has a `serde` feature for serializing parsed messages
+- `mailparse 0.16.1` has 523K downloads (very popular) but returns nested `ParsedMail` trees that callers must traverse manually; appropriate if users need full raw MIME access
+- Either choice works — `mail-parser` is recommended because its API is lower friction for application developers
 
 ---
 
-## Cargo.toml Structure
+## Pipelining: No New Crates Required
 
-The dual-backend feature flag design follows the pattern used by `reqwest`, `imap`, and similar network crates:
+RFC 2449 pipelining is implemented entirely with existing `tokio` primitives and `std`:
+
+```
+Client writer task:
+  1. BufWriter::write_all(command_bytes).await   ← existing tokio io-util
+  2. VecDeque::push_back(pending_tag)            ← std::collections::VecDeque
+  3. BufWriter::flush().await                    ← flushes batched writes
+
+Client reader task:
+  4. BufReader::read_line().await                ← existing tokio io-util
+  5. VecDeque::pop_front()                       ← match response to command
+```
+
+The key: `BufWriter` accumulates multiple command writes before a single `flush()`, achieving
+the pipelining window. The `VecDeque<PendingCommand>` tracks which response belongs to which
+outstanding command (RFC 2449 requires responses in command order).
+
+**What NOT to reach for:**
+- `tokio::sync::mpsc` channels: Useful when pipelining spans multiple tasks, but for a
+  single-connection client the simpler split-reader/writer approach with `VecDeque` avoids
+  channel overhead. Channels add complexity only if the public API exposes concurrent
+  callers on one connection — which conflicts with POP3's sequential command model.
+- `bytes::Bytes`: Not needed; POP3 commands are short ASCII lines.
+
+---
+
+## UIDL Cache: Implementation Pattern
+
+The UIDL cache persists a `HashMap<String, u32>` (UIDL string → message number at last sync)
+to a user-supplied file path between sessions.
+
+**In-memory:** `std::collections::HashMap<String, u32>` — no external crate
+**Persistence:** `serde_json` for JSON serialization + `tokio::fs` for async file write
 
 ```toml
-[package]
-name = "pop3"
-version = "2.0.0"
-edition = "2021"
-rust-version = "1.80"   # LazyLock stable; tokio LTS MSRV is 1.70, but LazyLock needs 1.80
+# In Cargo.toml [features]
+uidl-cache = ["dep:serde", "dep:serde_json"]
+```
 
+```rust
+// Serialization via serde derive — zero-cost abstraction
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct UidlCache {
+    pub entries: HashMap<String, u32>,
+}
+
+// Write to disk (non-blocking path via spawn_blocking or tokio::fs)
+let json = serde_json::to_string(&cache)?;
+tokio::fs::write(&path, json).await?;
+```
+
+**Why JSON instead of bincode/MessagePack:**
+- Human-readable for debugging (users can inspect/edit the cache file)
+- No additional crate beyond `serde_json` (already needed)
+- Acceptable performance at POP3 scale (mailbox UIDs are rarely > 50K entries)
+
+**Why NOT `dashmap` or `moka`:**
+- UIDL cache is single-session, single-task (no concurrent readers/writers)
+- `Arc<RwLock<HashMap>>` is unnecessary — the cache is owned by the session
+- Adds a dependency for zero benefit at this scale
+
+---
+
+## Cargo.toml Structure (v3.0 additions)
+
+```toml
 [features]
-# Exactly one TLS backend must be selected; neither is the default (force explicit choice)
-openssl = ["dep:openssl", "dep:tokio-openssl"]
-rustls  = ["dep:rustls", "dep:tokio-rustls", "dep:webpki-roots"]
+# Existing v2.0 features (unchanged)
+openssl  = ["dep:openssl", "dep:tokio-openssl"]
+rustls   = ["dep:rustls", "dep:tokio-rustls", "dep:webpki-roots"]
+
+# New v3.0 features
+uidl-cache    = ["dep:serde", "dep:serde_json"]
+connection-pool = ["dep:bb8"]
+mime          = ["dep:mail-parser"]
 
 [dependencies]
+# --- Existing v2.0 dependencies (do not change) ---
 tokio        = { version = "1.49", features = ["net", "io-util", "macros", "rt-multi-thread"] }
 thiserror    = "2.0"
 regex        = "1"
 
-# TLS backends — both optional, selected via feature flags
 openssl      = { version = "0.10", optional = true }
 tokio-openssl = { version = "0.6", optional = true }
-
 rustls       = { version = "0.23", default-features = false, features = ["logging", "std", "tls12", "ring"], optional = true }
 tokio-rustls = { version = "0.26", optional = true }
 webpki-roots = { version = "1.0", optional = true }
+
+# --- New v3.0 dependencies ---
+backon        = "1.6"                           # always included; exponential backoff is core reconnection logic
+bb8           = { version = "0.9", optional = true }  # connection-pool feature
+serde         = { version = "1.0", features = ["derive"], optional = true }  # uidl-cache feature
+serde_json    = { version = "1.0", optional = true }  # uidl-cache feature
+mail-parser   = { version = "0.11", optional = true }  # mime feature
 
 [dev-dependencies]
 tokio-test = "0.4"
 tokio      = { version = "1.49", features = ["rt", "macros"] }
 ```
 
-**Critical notes on this structure:**
+**Rationale for `backon` being always-on (not optional):**
 
-- `rustls` is declared with `default-features = false, features = ["ring"]` to use the `ring` crypto provider instead of the default `aws-lc-rs`. This avoids the `aws-lc-sys` native build (CMake, NASM) that breaks cross-compilation and CI on many platforms. The `ring` provider covers TLS 1.2 and TLS 1.3 fully for client use.
-- `tokio` features: `net` for `TcpStream`; `io-util` for `BufReader`/`BufWriter`; `macros` for `#[tokio::main]` and `#[tokio::test]`; `rt-multi-thread` for the full runtime in examples and tests.
-- `lazy_static` is removed entirely; use `std::sync::LazyLock` (no external dependency).
+Automatic reconnection with exponential backoff is part of the core v3.0 client contract.
+Making it optional creates conditional compilation paths in the reconnection logic that
+provide no meaningful binary size savings (backon has zero runtime overhead when not
+triggered). If binary size is critical, `backon`'s compile-time footprint is negligible
+compared to TLS crates already in the graph. Keep it unconditional.
+
+---
+
+## bb8 ManageConnection Integration Point
+
+The POP3 connection pool requires implementing `bb8::ManageConnection` for the `Pop3Client`
+connection manager:
+
+```rust
+use bb8::ManageConnection;
+
+pub struct Pop3ConnectionManager {
+    host: String,
+    port: u16,
+    // TLS config, auth credentials, etc.
+}
+
+impl ManageConnection for Pop3ConnectionManager {
+    type Connection = Pop3Client;  // the v2.0 client type
+    type Error = Pop3Error;
+
+    async fn connect(&self) -> Result<Pop3Client, Pop3Error> {
+        // Build and authenticate a new POP3 connection
+        Pop3ClientBuilder::new(&self.host, self.port)
+            .connect().await
+    }
+
+    async fn is_valid(&self, conn: &mut Pop3Client) -> Result<(), Pop3Error> {
+        // NOOP keeps the connection alive; use as health check
+        conn.noop().await
+    }
+
+    fn has_broken(&self, _conn: &mut Pop3Client) -> bool {
+        // Return true if the connection is known-broken
+        // (e.g., after a write error sets an internal flag)
+        false  // implement with interior broken flag on Pop3Client
+    }
+}
+```
+
+**Important POP3 constraint:** POP3 servers enforce a single active session per mailbox
+(`[IN-USE]` lock). A connection pool therefore makes sense only for multi-mailbox scenarios
+or test environments — document this clearly in the pool API. Do NOT pool connections to the
+same mailbox from the same account concurrently.
+
+bb8 pool defaults:
+- `max_size`: 10 connections
+- `connection_timeout`: 30 seconds
+- `idle_timeout`: 10 minutes
+- `max_lifetime`: 30 minutes
+- `test_on_check_out`: true (calls `is_valid` before returning connection)
+
+---
+
+## backon ExponentialBuilder Configuration
+
+```rust
+use backon::{ExponentialBuilder, Retryable};
+
+// Recommended reconnection policy for POP3
+let backoff = ExponentialBuilder::default()
+    .with_min_delay(Duration::from_secs(1))   // start at 1 second
+    .with_max_delay(Duration::from_secs(60))  // cap at 60 seconds
+    .with_max_times(5)                        // 5 attempts before giving up
+    .with_factor(2.0)                         // double each time: 1s, 2s, 4s, 8s, 16s
+    .with_jitter();                           // add jitter to avoid thundering herd
+
+let result = connect_to_server
+    .retry(backoff)
+    .when(|e| e.is_transient())  // only retry transient errors (network, timeout)
+    .await?;
+```
+
+backon defaults (for reference):
+- `min_delay`: 1 second
+- `max_delay`: 60 seconds
+- `factor`: 2.0
+- `max_times`: 3 attempts
+- `jitter`: disabled
+
+The recommended v3.0 policy uses 5 retries with jitter enabled.
+
+---
+
+## Alternatives Considered
+
+| Recommended | Alternative | Why Not |
+|-------------|-------------|---------|
+| `backon 1.6` | `tokio-retry 0.3` | tokio-retry uses iterator-based API that's less ergonomic than backon's `.retry()` method chaining; last meaningful update 2021; no conditional retry on error type without `RetryIf` wrapper |
+| `backon 1.6` | `backoff` crate | RUSTSEC-2025-0012: unmaintained; no longer updated |
+| `bb8 0.9` | `deadpool 0.13` | deadpool's `Manager` trait is designed for database connections; bb8's `ManageConnection` has equivalent semantics with better documentation for custom async connection types |
+| `bb8 0.9` | `mobc` | mobc adds configuration complexity (metrics, hooks) not needed for POP3; smaller ecosystem |
+| `mail-parser 0.11` | `mailparse 0.16` | mailparse returns nested MIME tree requiring manual traversal; mail-parser provides flattened `.text_bodies()` / `.attachments()` API that reduces boilerplate for users |
+| `serde_json` for UIDL cache | `bincode` or `postcard` | JSON is human-readable (users can inspect/repair cache files); serde\_json already in dependency graph for other potential uses; performance acceptable at POP3 mailbox scale |
+| `std::collections::VecDeque` for pipelining | External queue crate | Pipelining requires only ordered FIFO of pending command tags; std VecDeque covers this with no dependency cost |
+
+---
+
+## What NOT to Add
+
+| Avoid | Why | Use Instead |
+|-------|-----|-------------|
+| `dashmap` | Concurrent HashMap — overkill for UIDL cache which is single-owner single-task | `std::collections::HashMap` (no concurrency needed) |
+| `moka` | Async-aware TTL cache — pipelining and UIDL do not need TTL eviction | `std::collections::HashMap` + `serde_json` |
+| `bytes` crate | POP3 commands are short ASCII lines; no zero-copy buffer slicing needed | `String` and `Vec<u8>` |
+| `async-trait` | Not needed: Rust 1.75+ native `async fn` in traits; `bb8::ManageConnection` uses `impl Future` returns | Native `async fn` in impl blocks |
+| `tokio::sync::mpsc` for pipelining | Channels add cross-task overhead; pipelining is a single-task writer/reader split using `BufWriter` + `VecDeque` | `tokio::io::BufWriter` + `std::collections::VecDeque` |
+| `once_cell` | MSRV is 1.80; `std::sync::LazyLock` covers all use cases from Rust 1.80+ | `std::sync::LazyLock` (already decided in v2.0) |
+
+---
+
+## Feature Flag Design (v3.0 additions)
+
+```
+              pop3 crate (v3.0)
+               /      \         \          \
+   [feature: openssl] [feature: rustls]  [feature: uidl-cache]  [feature: mime]
+         |                  |                    |                     |
+   openssl 0.10         rustls 0.23          serde 1.0           mail-parser 0.11
+   tokio-openssl 0.6    tokio-rustls 0.26    serde_json 1.0
+                        webpki-roots 1.0
+
+              [feature: connection-pool]
+                        |
+                     bb8 0.9
+
+              [always included]
+                        |
+                     backon 1.6
+```
+
+**Rules:**
+- `uidl-cache` and `mime` are independent; both can be enabled simultaneously
+- `connection-pool` does not require `uidl-cache` (they are orthogonal features)
+- `backon` is always compiled in because reconnection is part of the core async client
+- TLS backend selection is unchanged from v2.0 (`openssl` XOR `rustls`)
+
+---
+
+## Version Compatibility Matrix (v3.0 additions)
+
+| Package | Compatible With | Notes |
+|---------|-----------------|-------|
+| `backon 1.6` | `tokio 1.49` | backon is runtime-agnostic; provides `tokio::time::sleep` integration via trait; no feature flags required for tokio |
+| `bb8 0.9.1` | `tokio 1.49` | bb8 is tokio-native; uses `tokio::time` internally; no conflicts |
+| `serde 1.0.228` | all above | Pure macro crate; zero runtime; compatible with everything |
+| `serde_json 1.0.149` | `serde 1.0.228` | serde\_json 1.0 requires serde 1.0; version ranges are compatible |
+| `mail-parser 0.11` | all above | Zero external required dependencies; optional `encoding_rs 0.8` for CJK; `serde 1.0` for its own serde feature |
+
+**MSRV impact of new crates:**
+- `backon 1.6`: not explicitly documented; `edition = "2021"` (requires Rust 1.56+); in practice compatible with MSRV 1.80 already set by `LazyLock`
+- `bb8 0.9`: targets Rust stable; compatible with MSRV 1.80
+- `serde 1.0` / `serde_json 1.0`: long-standing; compatible with MSRV 1.80
+- `mail-parser 0.11`: `edition = "2021"`; compatible with MSRV 1.80
+- **No MSRV change from v2.0's 1.80 is required.**
 
 ---
 
 ## Installation
 
 ```bash
-# For users who want the openssl backend
-cargo add pop3 --features openssl
+# Users who want all v3.0 features
+cargo add pop3 --features "rustls,uidl-cache,connection-pool,mime"
 
-# For users who want the rustls backend (no C dependencies)
+# Users who only want reconnection (always available — backon is unconditional)
 cargo add pop3 --features rustls
 
-# Development setup
+# Users who want UIDL caching for incremental sync
+cargo add pop3 --features "rustls,uidl-cache"
+
+# Users who want connection pooling (multi-mailbox)
+cargo add pop3 --features "rustls,connection-pool"
+
+# Library development setup
 cargo add --dev tokio-test
 ```
 
 ---
 
-## Alternatives Considered
-
-| Recommended | Alternative | When to Use Alternative |
-|-------------|-------------|-------------------------|
-| `rustls` with `ring` crypto | `rustls` with `aws-lc-rs` (default) | When FIPS-140-3 compliance is required or post-quantum algorithms are needed. Not applicable to a POP3 client library. |
-| `tokio-openssl 0.6` | `native-tls` + `tokio-native-tls` | When you want OS TLS (Secure Transport on macOS, SChannel on Windows) with no system OpenSSL requirement. Excluded because v1.0.6 already committed to `openssl` and `native-tls` API surface differs significantly. |
-| `tokio-test` mock I/O | Live POP3 test server in CI | Live server tests require credentials, external network, and are flaky. `tokio-test::io::Builder` lets you replay byte-exact POP3 sessions deterministically. |
-| `thiserror` | Manual `impl std::error::Error` | Manual impls are fine but generate significant boilerplate for 6+ error variants; `thiserror` produces identical output at zero runtime cost. |
-| `std::sync::LazyLock` | `once_cell::sync::Lazy` | `once_cell` is the right choice only if MSRV < 1.80. Since MSRV is 1.80 (for `LazyLock`), there is no reason to add the `once_cell` dependency. |
-| `std::sync::LazyLock` | `lazy_static!` | `lazy_static` is explicitly deprecated by the regex crate docs and slower than `LazyLock` in benchmarks. Remove it. |
-
----
-
-## What NOT to Use
-
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| `lazy_static` | Deprecated upstream; slower than `std::sync::LazyLock`; requires `#[macro_use]` extern crate idiom from Rust 2015 | `std::sync::LazyLock<Regex>` (stable since Rust 1.80) |
-| `rustls` default features (`aws-lc-rs`) | Requires C/CMake/NASM toolchain; breaks CI on stripped-down containers; build failures reported across ecosystem | `rustls` with `default-features = false, features = ["ring"]` |
-| `async-trait` crate | No longer needed for this use case. Rust 1.75+ has native `async fn` in traits; this library does not use `dyn Trait` for its public API | Native `async fn` in struct `impl` blocks |
-| `anyhow` | Application-level error aggregator; hides error variant from library consumers who need to `match` on failures | `thiserror` for typed, matchable `Pop3Error` variants |
-| `async-pop` (external crate) | Uses `async-native-tls` only; lacks tokio-native dual-backend design; minimal maintenance | Build in-house as this project IS the `pop3` crate |
-| `bytes` crate | Overkill for line-oriented POP3 parsing; adds a dependency for no benefit over `String`/`Vec<u8>` | `String` and `tokio::io::BufReader::read_line()` |
-| Travis CI | Free tier for open source discontinued; badge in README is stale/broken | GitHub Actions with `actions-rust-lang/setup-rust-toolchain@v1` |
-| Rust 2015 edition | Disables modern import paths, `async`/`await`, and forces `extern crate` declarations | `edition = "2021"` in `Cargo.toml` |
-
----
-
-## Feature Flag Design (TLS Backend Selection)
-
-```
-              pop3 crate
-               /      \
-     [feature: openssl] [feature: rustls]
-          |                    |
-    openssl 0.10          rustls 0.23
-    tokio-openssl 0.6     tokio-rustls 0.26
-                          webpki-roots 1.0
-```
-
-**Rules:**
-- No default TLS backend — forces users to make an explicit choice in their `Cargo.toml`.
-- Both features can theoretically coexist (they compile independently), but the public API should expose a single `TlsConnector` enum that routes to whichever backend is compiled in.
-- Use `#[cfg(feature = "openssl")]` and `#[cfg(feature = "rustls")]` at the module level to gate implementation code.
-
----
-
-## Version Compatibility Matrix
-
-| Package | Compatible With | Notes |
-|---------|-----------------|-------|
-| `tokio 1.49` | `tokio-openssl 0.6.5` | tokio-openssl targets tokio 1.x |
-| `tokio 1.49` | `tokio-rustls 0.26.4` | tokio-rustls 0.26 targets rustls 0.23 and tokio 1.x |
-| `rustls 0.23.36` | `tokio-rustls 0.26.4` | tokio-rustls 0.26 is compatible with rustls 0.23; tokio-rustls 0.27 targets rustls 0.24+ |
-| `rustls 0.23.36` | `webpki-roots 1.0.6` | webpki-roots 1.x is the current series for rustls 0.23+ |
-| `openssl 0.10.75` | `tokio-openssl 0.6.5` | Both are on their respective stable series |
-| `thiserror 2.0.18` | All above | thiserror 2.x is a major version bump from 1.x; both work with stable Rust |
-| `tokio-test 0.4.5` | `tokio 1.49` | tokio-test 0.4.x targets tokio 1.x |
-
-**MSRV summary:**
-- `tokio 1.49` LTS: MSRV 1.70
-- `rustls 0.23`: MSRV 1.71
-- `std::sync::LazyLock`: stable since Rust 1.80
-- **Recommended project MSRV: 1.80** (driven by `LazyLock`; satisfies all dependencies)
-
----
-
-## GitHub Actions CI Structure
-
-Two jobs are sufficient for v2.0:
-
-```yaml
-# .github/workflows/ci.yml
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        features: ["openssl", "rustls"]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          components: rustfmt, clippy
-      - run: cargo test --features ${{ matrix.features }}
-      - run: cargo clippy --features ${{ matrix.features }} -- -D warnings
-      - run: cargo fmt --check
-```
-
-The matrix tests both TLS backends independently. The `openssl` job on `ubuntu-latest` works because GitHub's Ubuntu runner has OpenSSL installed. No separate Windows/macOS jobs are needed for v2.0.
-
----
-
 ## Sources
 
-- [docs.rs/tokio/latest](https://docs.rs/tokio/latest/tokio/) — version 1.49.0 confirmed; features `net`, `io-util`, `macros`, `rt-multi-thread` verified. Confidence: HIGH.
-- [docs.rs/tokio-openssl/latest](https://docs.rs/tokio-openssl/latest/tokio_openssl/) — version 0.6.5 confirmed; AsyncRead/AsyncWrite adapter role verified. Confidence: HIGH.
-- [docs.rs/tokio-rustls/latest](https://docs.rs/tokio-rustls/latest/tokio_rustls/) — version 0.26.4 confirmed; rustls 0.23 compatibility confirmed. Confidence: HIGH.
-- [docs.rs/rustls/latest](https://docs.rs/rustls/latest/rustls/) — version 0.23.36; MSRV 1.71; `ring` feature flag for pure-Rust alternative to `aws-lc-rs` confirmed. Confidence: HIGH.
-- [docs.rs/thiserror/latest](https://docs.rs/thiserror/latest/thiserror/) — version 2.0.18 confirmed. Confidence: HIGH.
-- [docs.rs/webpki-roots/latest](https://docs.rs/webpki-roots/latest/webpki_roots/) — version 1.0.6 confirmed. Confidence: HIGH.
-- [docs.rs/tokio-test/latest](https://docs.rs/tokio-test/latest/tokio_test/) — version 0.4.5; `io::Builder` mock confirmed. Confidence: HIGH.
-- [docs.rs/rustls/latest — ring feature](https://docs.rs/rustls/latest/rustls/) — `default-features = false, features = ["ring"]` pattern to avoid `aws-lc-rs` confirmed via official docs. Confidence: HIGH.
-- [doc.rust-lang.org LazyLock](https://doc.rust-lang.org/std/sync/struct.LazyLock.html) — stable since Rust 1.80; replaces `lazy_static`. Confirmed via clippy issue #12895 and community discussion. Confidence: HIGH.
-- [github.com/rustls/rustls issue #1877](https://github.com/rustls/rustls/issues/1877) — `aws-lc-rs` vs `ring` conflict and resolution confirmed. Confidence: MEDIUM.
-- [actions-rust-lang/setup-rust-toolchain](https://github.com/actions-rust-lang/setup-rust-toolchain) — current recommended GitHub Actions for Rust CI; handles caching and problem matchers. Confidence: HIGH.
+- [docs.rs/backon/latest](https://docs.rs/backon/latest/backon/) — version 1.6.0 confirmed; `ExponentialBuilder` API (min\_delay, max\_delay, factor, max\_times, jitter) verified. Confidence: HIGH.
+- [docs.rs/backon/latest/backon/struct.ExponentialBuilder.html](https://docs.rs/backon/latest/backon/struct.ExponentialBuilder.html) — defaults (1s, 60s, factor 2.0, 3 retries, jitter off) verified. Confidence: HIGH.
+- [rustmagazine.org/issue-2/how-i-designed-the-api-for-backon](https://rustmagazine.org/issue-2/how-i-designed-the-api-for-backon-a-user-friendly-retry-crate/) — backon API philosophy and ergonomic advantages over older crates. Confidence: HIGH.
+- [magazine.ediary.site — backoff crate unmaintained](https://magazine.ediary.site/blog/rusts-backoff-crate-why-its) — RUSTSEC-2025-0012 confirmed. Confidence: HIGH.
+- [docs.rs/bb8/latest/bb8/trait.ManageConnection.html](https://docs.rs/bb8/latest/bb8/trait.ManageConnection.html) — ManageConnection trait signature (version 0.9.1) verified; `connect()`, `is_valid()`, `has_broken()` methods confirmed. Confidence: HIGH.
+- [docs.rs/bb8/0.9.1/bb8/struct.Builder.html](https://docs.rs/bb8/0.9.1/bb8/struct.Builder.html) — Pool builder defaults (max\_size 10, connection\_timeout 30s, idle\_timeout 10m, max\_lifetime 30m, test\_on\_check\_out true) verified. Confidence: HIGH.
+- [oneuptime.com — bb8 vs deadpool comparison 2026](https://oneuptime.com/blog/post/2026-01-25-connection-pools-bb8-deadpool-rust/view) — "Choose bb8 if you need flexibility or work with custom connection types" confirmed. Confidence: MEDIUM (blog post, not official docs).
+- [docs.rs/mail-parser/latest](https://docs.rs/mail-parser/) — version 0.11.2 confirmed; feature flags (serde, full\_encoding, rkyv) verified via raw Cargo.toml. Confidence: HIGH.
+- [github.com/stalwartlabs/mail-parser Cargo.toml](https://raw.githubusercontent.com/stalwartlabs/mail-parser/main/Cargo.toml) — zero required external dependencies confirmed; optional: `encoding_rs 0.8`, `serde 1.0`, `rkyv 0.8`. Confidence: HIGH.
+- [lib.rs/email](https://lib.rs/email) — download counts: mailparse 523K, mail-parser 132K — mailparse more widely deployed but mail-parser growing. Confidence: MEDIUM.
+- [docs.rs/serde/latest](https://docs.rs/serde/latest/) — version 1.0.228 (2025-09-27) confirmed. Confidence: HIGH.
+- [docs.rs/serde_json/latest](https://docs.rs/serde_json/latest/) — version 1.0.149 (2026-01-06) confirmed. Confidence: HIGH.
+- [tokio.rs/tokio/tutorial/channels](https://tokio.rs/tokio/tutorial/channels) — tokio mpsc + oneshot channel pattern for pipelining confirmed; VecDeque approach noted as simpler for single-task use. Confidence: HIGH.
+- [datatracker.ietf.org/doc/html/rfc2449](https://datatracker.ietf.org/doc/html/rfc2449) — RFC 2449 PIPELINING capability: server processes commands in order; client tracks outstanding commands in order; BufWriter window approach confirmed. Confidence: HIGH.
 
 ---
 
-*Stack research for: rust-adv-pop3 v2.0 async rewrite*
+*Stack research for: rust-adv-pop3 v3.0 advanced features*
 *Researched: 2026-03-01*
