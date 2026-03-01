@@ -18,7 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **v2.0 Phases:**
 - [x] **Phase 1: Foundation** - Fix known bugs, establish error handling, and build test infrastructure
-- [ ] **Phase 2: Async Core** - Migrate all I/O to async/await, port all v1 commands, set up CI
+- [x] **Phase 2: Async Core** - Migrate all I/O to async/await, port all v1 commands, set up CI
 - [ ] **Phase 3: TLS and Publish** - Add dual TLS backends, remaining commands, docs, and ship v2.0.0
 - [ ] **Phase 4: Protocol Extensions** - Add APOP, RESP-CODES, and builder pattern API
 
@@ -56,9 +56,9 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Calling `quit()` consumes the client value — the compiler rejects any further method calls on the same variable after disconnect
   5. GitHub Actions CI passes `cargo test`, `cargo clippy -D warnings`, and `cargo fmt --check` on every push
 **Plans:** 3 plans
-- [ ] 02-01-PLAN.md — Tokio dependencies, Pop3Error::Timeout, and async transport rewrite (ASYNC-02, ASYNC-03, ASYNC-05)
-- [ ] 02-02-PLAN.md — Async Pop3Client with SessionState, quit(self), and test migration (ASYNC-01, ASYNC-04, API-03, API-04)
-- [ ] 02-03-PLAN.md — GitHub Actions CI workflow (QUAL-03)
+- [x] 02-01-PLAN.md — Tokio dependencies, Pop3Error::Timeout, and async transport rewrite (ASYNC-02, ASYNC-03, ASYNC-05)
+- [x] 02-02-PLAN.md — Async Pop3Client with SessionState, quit(self), and test migration (ASYNC-01, ASYNC-04, API-03, API-04)
+- [x] 02-03-PLAN.md — GitHub Actions CI workflow (QUAL-03)
 
 ### Phase 3: TLS and Publish
 **Goal**: Library users can connect to port 995 TLS servers using either rustls or openssl, CAPA and TOP work, docs are complete, and v2.0.0 is published to crates.io
