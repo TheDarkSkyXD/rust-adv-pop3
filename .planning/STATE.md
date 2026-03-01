@@ -3,12 +3,25 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-03-01T20:09:00.000Z"
+last_updated: "2026-03-01T21:26:52.240Z"
 progress:
   total_phases: 2
   completed_phases: 2
-  total_plans: 5
-  completed_plans: 5
+  total_plans: 6
+  completed_plans: 6
+---
+
+---
+gsd_state_version: 1.0
+milestone: v2.0
+milestone_name: milestone
+status: unknown
+last_updated: "2026-03-01T21:24:00.000Z"
+progress:
+  total_phases: 2
+  completed_phases: 2
+  total_plans: 6
+  completed_plans: 6
 ---
 
 # Project State
@@ -23,28 +36,28 @@ See: .planning/PROJECT.md (updated 2026-03-01)
 ## Current Position
 
 Phase: 2 of 9 (Async Core)
-Plan: 3 of 3 in current phase (COMPLETE)
-Status: Phase 2 complete — ready for Phase 3
-Last activity: 2026-03-01 — Completed 02-03 (GitHub Actions CI workflow, async Pop3Client migration with SessionState)
+Plan: 4 of 4 in current phase (COMPLETE)
+Status: Phase 2 fully verified — ready for Phase 3
+Last activity: 2026-03-01 — Completed 02-04 (Phase 2 gap closure, VERIFICATION.md all_clear 12/12)
 
 Progress: [████░░░░░░] 22%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 5
-- Average duration: ~15 min
-- Total execution time: ~75 min
+- Total plans completed: 6
+- Average duration: ~13 min
+- Total execution time: ~80 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01-foundation | 2 | 40 min | 20 min |
-| 02-async-core | 3 | ~35 min | ~12 min |
+| 02-async-core | 4 | ~40 min | ~10 min |
 
 **Recent Trend:**
-- Last 5 plans: 25 min, 15 min, ~20 min, ~11 min, 4 min
+- Last 5 plans: 15 min, ~20 min, ~11 min, 4 min, ~5 min
 - Trend: accelerating
 
 *Updated after each plan completion*
@@ -66,6 +79,8 @@ Recent decisions affecting current work:
 - [02-03]: quit(self) consumes the client — move semantics provide compile-time use-after-disconnect prevention
 - [02-03]: SessionState replaces authenticated: bool — enables callers to match on Connected/Authenticated/Disconnected
 - [02-03]: login() returns NotAuthenticated if state != Connected — prevents double-login bugs
+- [02-04]: ROADMAP criterion #2 "integration tests against a mock server" satisfied by existing 57 tokio_test::io::Builder tests — these exercise the full client→transport→mock I/O path for all commands; no separate tests/ integration suite required
+- [02-04]: examples/basic.rs fixed (commit 7cfd455) — now uses async v2 API with #[tokio::main], .await, and correct connect signature
 - [Roadmap]: Async with tokio — industry standard, largest ecosystem
 - [Roadmap]: Dual TLS via feature flags (openssl + rustls) — mutual exclusion enforced by compile_error!
 - [Roadmap]: Major version bump to v2.0 — API breaking changes justify semver major
@@ -96,5 +111,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed 02-03-PLAN.md — GitHub Actions CI workflow (test/clippy/fmt on ubuntu-latest), async Pop3Client with SessionState, quit(self) move semantics. Phase 2 complete. Ready for Phase 3 TLS.
+Stopped at: Completed 02-04-PLAN.md — Phase 2 verification gaps closed. Gap 1 (examples/basic.rs) validated fixed (commit 7cfd455). Gap 2 (integration test criterion) resolved by decision: existing tokio_test mock tests satisfy ROADMAP criterion #2. VERIFICATION.md updated to all_clear (12/12). Phase 2 fully verified. Ready for Phase 3 TLS.
 Resume file: None
