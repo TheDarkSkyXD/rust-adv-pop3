@@ -14,7 +14,7 @@ pub(crate) const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 enum InnerStream {
     Plain(TcpStream),
     #[cfg(feature = "rustls-tls")]
-    RustlsTls(tokio_rustls::client::TlsStream<TcpStream>),
+    RustlsTls(Box<tokio_rustls::client::TlsStream<TcpStream>>),
     #[cfg(feature = "openssl-tls")]
     OpensslTls(tokio_openssl::SslStream<TcpStream>),
     #[cfg(test)]
@@ -114,8 +114,8 @@ impl Transport {
         timeout: Duration,
     ) -> Result<Self> {
         use std::sync::Arc;
-        use tokio_rustls::TlsConnector;
         use tokio_rustls::rustls::{ClientConfig, RootCertStore};
+        use tokio_rustls::TlsConnector;
 
         // Validate hostname — use the pki_types re-export from tokio_rustls
         let server_name =
@@ -143,7 +143,7 @@ impl Transport {
             .await
             .map_err(|e| Pop3Error::Tls(e.to_string()))?;
 
-        let inner = InnerStream::RustlsTls(tls_stream);
+        let inner = InnerStream::RustlsTls(Box::new(tls_stream));
         let (read_half, write_half) = io::split(inner);
         Ok(Transport {
             reader: BufReader::new(read_half),
