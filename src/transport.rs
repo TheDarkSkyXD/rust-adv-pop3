@@ -27,11 +27,10 @@ impl AsyncRead for InnerStream {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        // SAFETY: We only access one field at a time, and all inner types are Unpin.
         match self.get_mut() {
             InnerStream::Plain(s) => Pin::new(s).poll_read(cx, buf),
             #[cfg(feature = "rustls-tls")]
-            InnerStream::RustlsTls(s) => Pin::new(s).poll_read(cx, buf),
+            InnerStream::RustlsTls(s) => Pin::new(s.as_mut()).poll_read(cx, buf),
             #[cfg(feature = "openssl-tls")]
             InnerStream::OpensslTls(s) => Pin::new(s).poll_read(cx, buf),
             #[cfg(test)]
