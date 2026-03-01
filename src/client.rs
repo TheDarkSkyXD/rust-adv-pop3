@@ -95,6 +95,50 @@ impl Pop3Client {
         self.transport.is_encrypted()
     }
 
+    /// Upgrade the connection to TLS via the STLS command (POP3 STARTTLS).
+    ///
+    /// Must be called before authentication — STLS is only valid in the
+    /// AUTHORIZATION state per RFC 2595. After a successful upgrade,
+    /// [`is_encrypted()`](Self::is_encrypted) returns `true`.
+    ///
+    /// The `hostname` parameter is used for TLS server name verification (SNI).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect(
+    ///         ("pop.example.com", 110),
+    ///         std::time::Duration::from_secs(30),
+    ///     ).await?;
+    ///     client.stls("pop.example.com").await?;
+    ///     client.login("user", "pass").await?;
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+    pub async fn stls(&mut self, hostname: &str) -> Result<()> {
+        if self.state == SessionState::Authenticated {
+            return Err(Pop3Error::ServerError(
+                "STLS not allowed after authentication (RFC 2595)".to_string(),
+            ));
+        }
+        if self.is_encrypted() {
+            return Err(Pop3Error::ServerError(
+                "connection is already encrypted".to_string(),
+            ));
+        }
+
+        self.send_and_check("STLS").await?;
+        self.transport.upgrade_in_place(hostname).await?;
+
+        Ok(())
+    }
+
     /// Authenticate with the server using USER/PASS.
     pub async fn login(&mut self, username: &str, password: &str) -> Result<()> {
         if self.state != SessionState::Connected {

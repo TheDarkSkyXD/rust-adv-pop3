@@ -203,6 +203,7 @@ impl Transport {
     /// original `TcpStream` via `unsplit()`, performs a TLS handshake, then
     /// rebuilds `reader` and `writer` with the new TLS stream.
     #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+    #[allow(dead_code)] // Used in Plan 02 (STARTTLS) — not yet called from client.rs
     pub(crate) async fn upgrade_in_place(&mut self, hostname: &str) -> Result<()> {
         let pending = self.reader.buffer().len();
         if pending > 0 {
@@ -246,6 +247,7 @@ impl Transport {
     }
 
     #[cfg(feature = "rustls-tls")]
+    #[allow(dead_code)] // Used by upgrade_in_place (Plan 02)
     async fn tls_handshake(tcp_stream: TcpStream, hostname: &str) -> Result<InnerStream> {
         use std::sync::Arc;
         use tokio_rustls::rustls::{ClientConfig, RootCertStore};
@@ -412,5 +414,12 @@ mod tests {
         let mut transport = Transport::mock(mock);
         let line = transport.read_line().await.unwrap();
         assert_eq!(line, "+OK ready\r\n");
+    }
+
+    #[tokio::test]
+    async fn is_encrypted_false_for_mock() {
+        let mock = Builder::new().build();
+        let transport = Transport::mock(mock);
+        assert!(!transport.is_encrypted());
     }
 }
