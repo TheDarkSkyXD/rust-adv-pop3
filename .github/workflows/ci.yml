@@ -9,24 +9,50 @@ env:
 
 jobs:
   test:
-    name: Test
+    name: Test (${{ matrix.tls }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        tls: [rustls-tls, openssl-tls]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test
+      - name: Install OpenSSL dev (openssl-tls only)
+        if: matrix.tls == 'openssl-tls'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
+      - name: Test
+        run: cargo test --no-default-features --features ${{ matrix.tls }}
+      - name: Doc tests
+        run: cargo test --doc --no-default-features --features ${{ matrix.tls }}
 
   clippy:
-    name: Clippy
+    name: Clippy (${{ matrix.tls }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        tls: [rustls-tls, openssl-tls]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy -- -D warnings
+      - name: Install OpenSSL dev (openssl-tls only)
+        if: matrix.tls == 'openssl-tls'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
+      - name: Clippy
+        run: cargo clippy --no-default-features --features ${{ matrix.tls }} -- -D warnings
+
+  test-no-tls:
+    name: Test (no TLS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --no-default-features
 
   fmt:
     name: Format

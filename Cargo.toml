@@ -4,10 +4,11 @@ version = "2.0.0"
 edition = "2021"
 authors = ["Matt McCoy <mattnenterprise@yahoo.com>"]
 license = "MIT"
-description = "POP3 Client for Rust"
-repository = "https://github.com/mattnenterprise/rust-pop3"
-keywords = ["pop3", "email", "mail", "client"]
-categories = ["email", "network-programming"]
+description = "Async POP3 client library for Rust with dual TLS backend support"
+repository = "https://github.com/TheDarkSkyXD/rust-adv-pop3"
+readme = "README.md"
+keywords = ["pop3", "email", "mail", "client", "async"]
+categories = ["email", "network-programming", "asynchronous"]
 
 [lib]
 name = "pop3"
@@ -16,6 +17,16 @@ path = "src/lib.rs"
 [[example]]
 name = "basic"
 path = "examples/basic.rs"
+
+[[example]]
+name = "tls"
+path = "examples/tls.rs"
+required-features = ["rustls-tls"]
+
+[[example]]
+name = "starttls"
+path = "examples/starttls.rs"
+required-features = ["rustls-tls"]
 
 [features]
 default = ["rustls-tls"]
