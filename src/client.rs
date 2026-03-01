@@ -402,4 +402,180 @@ mod tests {
         assert_eq!(entries[1].size, 200);
         assert_eq!(&*writer.borrow(), b"LIST\r\n");
     }
+
+    // --- retr happy, error, and dot-unstuffing paths ---
+
+    #[test]
+    fn retr_happy_path() {
+        let server = b"+OK\r\nSubject: Test\r\n\r\nBody line 1\r\n.\r\n";
+        let (mut client, writer) = build_authenticated_test_client(server);
+        let msg = client.retr(1).unwrap();
+        assert!(msg.data.contains("Subject: Test"));
+        assert!(msg.data.contains("Body line 1"));
+        assert_eq!(&*writer.borrow(), b"RETR 1\r\n");
+    }
+
+    #[test]
+    fn retr_server_error() {
+        let (mut client, _) = build_authenticated_test_client(b"-ERR no such message\r\n");
+        let result = client.retr(1);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Pop3Error::ServerError(_) => {}
+            other => panic!("expected ServerError, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn retr_dot_unstuffing() {
+        // Server sends a line starting with ".." which should become "."
+        let server = b"+OK\r\n..This had a leading dot\r\nNormal line\r\n.\r\n";
+        let (mut client, _) = build_authenticated_test_client(server);
+        let msg = client.retr(1).unwrap();
+        assert!(
+            msg.data.contains(".This had a leading dot"),
+            "dot-unstuffing must remove one leading dot"
+        );
+        assert!(
+            !msg.data.contains("..This"),
+            "double dot must be reduced to single dot"
+        );
+    }
+
+    // --- dele happy and error paths ---
+
+    #[test]
+    fn dele_happy_path() {
+        let (mut client, writer) = build_authenticated_test_client(b"+OK message deleted\r\n");
+        client.dele(1).unwrap();
+        assert_eq!(&*writer.borrow(), b"DELE 1\r\n");
+    }
+
+    #[test]
+    fn dele_server_error() {
+        let (mut client, _) = build_authenticated_test_client(b"-ERR message locked\r\n");
+        let result = client.dele(1);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Pop3Error::ServerError(_) => {}
+            other => panic!("expected ServerError, got: {other:?}"),
+        }
+    }
+
+    // --- uidl single, all, and error paths ---
+
+    #[test]
+    fn uidl_single_happy_path() {
+        let (mut client, writer) =
+            build_authenticated_test_client(b"+OK 1 abc123\r\n");
+        let entries = client.uidl(Some(1)).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].message_id, 1);
+        assert_eq!(entries[0].unique_id, "abc123");
+        assert_eq!(&*writer.borrow(), b"UIDL 1\r\n");
+    }
+
+    #[test]
+    fn uidl_all_happy_path() {
+        let server = b"+OK\r\n1 uid-a\r\n2 uid-b\r\n.\r\n";
+        let (mut client, writer) = build_authenticated_test_client(server);
+        let entries = client.uidl(None).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].message_id, 1);
+        assert_eq!(entries[0].unique_id, "uid-a");
+        assert_eq!(entries[1].message_id, 2);
+        assert_eq!(entries[1].unique_id, "uid-b");
+        assert_eq!(&*writer.borrow(), b"UIDL\r\n");
+    }
+
+    #[test]
+    fn uidl_server_error() {
+        let (mut client, _) = build_authenticated_test_client(b"-ERR\r\n");
+        let result = client.uidl(Some(1));
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Pop3Error::ServerError(_) => {}
+            other => panic!("expected ServerError, got: {other:?}"),
+        }
+    }
+
+    // --- quit happy path and authenticated flag reset ---
+
+    #[test]
+    fn quit_happy_path() {
+        let (mut client, writer) = build_authenticated_test_client(b"+OK goodbye\r\n");
+        client.quit().unwrap();
+        assert_eq!(&*writer.borrow(), b"QUIT\r\n");
+    }
+
+    #[test]
+    fn quit_resets_authenticated() {
+        let (mut client, _) = build_authenticated_test_client(b"+OK goodbye\r\n");
+        assert!(client.authenticated);
+        client.quit().unwrap();
+        assert!(!client.authenticated, "quit must set authenticated=false");
+    }
+
+    // --- capa happy and error paths ---
+
+    #[test]
+    fn capa_happy_path() {
+        let server = b"+OK\r\nTOP\r\nUIDL\r\nSASL PLAIN\r\n.\r\n";
+        let (mut client, writer) = build_test_client(server);
+        let caps = client.capa().unwrap();
+        assert_eq!(caps.len(), 3);
+        assert_eq!(&*writer.borrow(), b"CAPA\r\n");
+    }
+
+    #[test]
+    fn capa_server_error() {
+        let (mut client, _) = build_test_client(b"-ERR not supported\r\n");
+        let result = client.capa();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Pop3Error::ServerError(_) => {}
+            other => panic!("expected ServerError, got: {other:?}"),
+        }
+    }
+
+    // --- top happy and error paths ---
+
+    #[test]
+    fn top_happy_path() {
+        let server = b"+OK\r\nSubject: Test\r\n\r\nFirst line\r\n.\r\n";
+        let (mut client, writer) = build_authenticated_test_client(server);
+        let msg = client.top(1, 5).unwrap();
+        assert!(msg.data.contains("Subject: Test"));
+        assert!(msg.data.contains("First line"));
+        assert_eq!(&*writer.borrow(), b"TOP 1 5\r\n");
+    }
+
+    #[test]
+    fn top_server_error() {
+        let (mut client, _) = build_authenticated_test_client(b"-ERR no such message\r\n");
+        let result = client.top(1, 5);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Pop3Error::ServerError(_) => {}
+            other => panic!("expected ServerError, got: {other:?}"),
+        }
+    }
+
+    // --- Not-authenticated guard: commands require authentication ---
+
+    #[test]
+    fn commands_require_authentication() {
+        let (mut client, _) = build_test_client(b"");
+        assert!(matches!(client.stat(), Err(Pop3Error::NotAuthenticated)));
+
+        // Re-create because the mock buffer is consumed
+        let (mut client, _) = build_test_client(b"");
+        assert!(matches!(client.list(None), Err(Pop3Error::NotAuthenticated)));
+
+        let (mut client, _) = build_test_client(b"");
+        assert!(matches!(client.retr(1), Err(Pop3Error::NotAuthenticated)));
+
+        let (mut client, _) = build_test_client(b"");
+        assert!(matches!(client.dele(1), Err(Pop3Error::NotAuthenticated)));
+    }
 }
