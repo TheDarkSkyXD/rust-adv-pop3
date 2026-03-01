@@ -94,44 +94,44 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FOUND-01 | — | Pending |
-| FOUND-02 | — | Pending |
-| FOUND-03 | — | Pending |
-| FOUND-04 | — | Pending |
-| FIX-01 | — | Pending |
-| FIX-02 | — | Pending |
-| FIX-03 | — | Pending |
-| FIX-04 | — | Pending |
-| ASYNC-01 | — | Pending |
-| ASYNC-02 | — | Pending |
-| ASYNC-03 | — | Pending |
-| ASYNC-04 | — | Pending |
-| ASYNC-05 | — | Pending |
-| TLS-01 | — | Pending |
-| TLS-02 | — | Pending |
-| TLS-03 | — | Pending |
-| TLS-04 | — | Pending |
-| TLS-05 | — | Pending |
-| TLS-06 | — | Pending |
-| CMD-01 | — | Pending |
-| CMD-02 | — | Pending |
-| CMD-03 | — | Pending |
-| CMD-04 | — | Pending |
-| API-01 | — | Pending |
-| API-02 | — | Pending |
-| API-03 | — | Pending |
-| API-04 | — | Pending |
-| QUAL-01 | — | Pending |
-| QUAL-02 | — | Pending |
-| QUAL-03 | — | Pending |
-| QUAL-04 | — | Pending |
-| QUAL-05 | — | Pending |
+| FOUND-01 | Phase 1 | Pending |
+| FOUND-02 | Phase 1 | Pending |
+| FOUND-03 | Phase 1 | Pending |
+| FOUND-04 | Phase 1 | Pending |
+| FIX-01 | Phase 1 | Pending |
+| FIX-02 | Phase 1 | Pending |
+| FIX-03 | Phase 1 | Pending |
+| FIX-04 | Phase 1 | Pending |
+| QUAL-01 | Phase 1 | Pending |
+| ASYNC-01 | Phase 2 | Pending |
+| ASYNC-02 | Phase 2 | Pending |
+| ASYNC-03 | Phase 2 | Pending |
+| ASYNC-04 | Phase 2 | Pending |
+| ASYNC-05 | Phase 2 | Pending |
+| API-03 | Phase 2 | Pending |
+| API-04 | Phase 2 | Pending |
+| QUAL-03 | Phase 2 | Pending |
+| QUAL-04 | Phase 2 | Pending |
+| TLS-01 | Phase 3 | Pending |
+| TLS-02 | Phase 3 | Pending |
+| TLS-03 | Phase 3 | Pending |
+| TLS-04 | Phase 3 | Pending |
+| TLS-05 | Phase 3 | Pending |
+| TLS-06 | Phase 3 | Pending |
+| CMD-01 | Phase 3 | Pending |
+| CMD-02 | Phase 3 | Pending |
+| QUAL-02 | Phase 3 | Pending |
+| QUAL-05 | Phase 3 | Pending |
+| CMD-03 | Phase 4 | Pending |
+| CMD-04 | Phase 4 | Pending |
+| API-01 | Phase 4 | Pending |
+| API-02 | Phase 4 | Pending |
 
 **Coverage:**
 - v1 requirements: 32 total
-- Mapped to phases: 0
-- Unmapped: 32 ⚠️
+- Mapped to phases: 32
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-03-01*
-*Last updated: 2026-03-01 after initial definition*
+*Last updated: 2026-03-01 after roadmap creation — all requirements mapped*
