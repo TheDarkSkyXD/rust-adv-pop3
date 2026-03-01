@@ -160,12 +160,29 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CMD-04 | Phase 4 | Pending |
 | API-01 | Phase 4 | Pending |
 | API-02 | Phase 4 | Pending |
+| PIPE-01 | Phase 5 | Pending |
+| PIPE-02 | Phase 5 | Pending |
+| PIPE-03 | Phase 5 | Pending |
+| PIPE-04 | Phase 5 | Pending |
+| PIPE-05 | Phase 5 | Pending |
+| CACHE-01 | Phase 6 | Pending |
+| CACHE-02 | Phase 6 | Pending |
+| CACHE-03 | Phase 6 | Pending |
+| RECON-01 | Phase 7 | Pending |
+| RECON-02 | Phase 7 | Pending |
+| RECON-03 | Phase 7 | Pending |
+| RECON-04 | Phase 7 | Pending |
+| POOL-01 | Phase 8 | Pending |
+| POOL-02 | Phase 8 | Pending |
+| POOL-03 | Phase 8 | Pending |
+| MIME-01 | Phase 9 | Pending |
+| MIME-02 | Phase 9 | Pending |
 
 **Coverage:**
-- v1 requirements: 32 total
-- Mapped to phases: 32
+- v1 requirements (v2.0 milestone): 32 total, mapped to phases 1-4: 32
+- v2 requirements (v3.0 milestone): 17 total, mapped to phases 5-9: 17
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-03-01*
-*Last updated: 2026-03-01 after roadmap creation — all requirements mapped*
+*Last updated: 2026-03-01 after v3.0 roadmap creation — all 49 requirements mapped*
