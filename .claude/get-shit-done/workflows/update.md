@@ -127,7 +127,7 @@ Exit.
 - `get-shit-done/` will be wiped and replaced
 - `agents/gsd-*` files will be replaced
 
-(Paths are relative to your install location: `./.claude/` for global, `./.claude/` for local)
+(Paths are relative to your install location: `$HOME/.claude/` for global, `./.claude/` for local)
 
 Your custom files in other locations are preserved:
 - Custom commands not in `commands/gsd/` ✓
@@ -166,10 +166,10 @@ Clear the update cache so statusline indicator disappears:
 
 ```bash
 rm -f ./.claude/cache/gsd-update-check.json
-rm -f ./.claude/cache/gsd-update-check.json
+rm -f "$HOME/.claude/cache/gsd-update-check.json"
 ```
 
-The SessionStart hook (`gsd-check-update.js`) always writes to `./.claude/cache/` via `os.homedir()` regardless of install type, so both paths must be cleared to prevent stale update indicators.
+The SessionStart hook (`gsd-check-update.js`) writes to `$HOME/.claude/cache/` via `os.homedir()` regardless of install type, so both local and global cache paths must be cleared to prevent stale update indicators.
 </step>
 
 <step name="display_result">

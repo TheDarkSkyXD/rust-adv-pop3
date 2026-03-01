@@ -21,11 +21,23 @@ fi
 ```
 </step>
 
+<step name="validate_execution_context">
+**Validate execution context:**
+
+```bash
+if [ ! -f ".claude/get-shit-done/bin/gsd-tools.cjs" ]; then
+  echo "Error: Health check must run from repository root"
+  echo "Current directory: $(pwd)"
+  exit 1
+fi
+```
+</step>
+
 <step name="run_health_check">
 **Run health validation:**
 
 ```bash
-node "$HOME/.claude/get-shit-done/bin/gsd-tools.cjs" validate health $REPAIR_FLAG
+node ".claude/get-shit-done/bin/gsd-tools.cjs" validate health $REPAIR_FLAG
 ```
 
 Parse JSON output:
@@ -112,7 +124,7 @@ If yes, re-run with --repair flag and display results.
 Re-run health check without --repair to confirm issues are resolved:
 
 ```bash
-node "$HOME/.claude/get-shit-done/bin/gsd-tools.cjs" validate health
+node ".claude/get-shit-done/bin/gsd-tools.cjs" validate health
 ```
 
 Report final status.
