@@ -889,6 +889,52 @@ mod tests {
         client.quit().await.unwrap();
     }
 
+    // --- stls: STARTTLS RFC 2595 guards ---
+
+    #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+    #[tokio::test]
+    async fn stls_rejects_when_authenticated() {
+        let mock = Builder::new().build();
+        let mut client = build_authenticated_test_client(mock);
+        let result = client.stls("example.com").await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Pop3Error::ServerError(msg) => {
+                assert!(msg.contains("not allowed after authentication"))
+            }
+            other => panic!("expected ServerError, got: {other:?}"),
+        }
+    }
+
+    #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+    #[tokio::test]
+    async fn stls_rejects_server_err() {
+        let mock = Builder::new()
+            .write(b"STLS\r\n")
+            .read(b"-ERR STLS not supported\r\n")
+            .build();
+        let mut client = build_test_client(mock);
+        let result = client.stls("example.com").await;
+        assert!(matches!(result, Err(Pop3Error::ServerError(_))));
+    }
+
+    #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+    #[tokio::test]
+    async fn stls_sends_command_correctly() {
+        // Mock returns +OK, then upgrade will fail because Mock is not a real
+        // TCP stream (it's InnerStream::Mock, not InnerStream::Plain). The test
+        // verifies the STLS command was sent and +OK was received before the
+        // upgrade attempt.
+        let mock = Builder::new()
+            .write(b"STLS\r\n")
+            .read(b"+OK begin TLS negotiation\r\n")
+            .build();
+        let mut client = build_test_client(mock);
+        let result = client.stls("example.com").await;
+        // upgrade_in_place fails because mock is not a Plain TcpStream — expected
+        assert!(result.is_err());
+    }
+
     // --- Not-authenticated guard: commands require authentication ---
 
     #[tokio::test]

@@ -178,6 +178,45 @@ impl Transport {
         })
     }
 
+    /// Connect over TLS using OpenSSL.
+    #[cfg(feature = "openssl-tls")]
+    pub(crate) async fn connect_tls(
+        addr: impl tokio::net::ToSocketAddrs,
+        hostname: &str,
+        timeout: Duration,
+    ) -> Result<Self> {
+        use openssl::ssl::{SslConnector, SslMethod};
+        use tokio_openssl::SslStream;
+
+        let connector = SslConnector::builder(SslMethod::tls())
+            .map_err(|e| Pop3Error::Tls(e.to_string()))?
+            .build();
+
+        let ssl = connector
+            .configure()
+            .map_err(|e| Pop3Error::Tls(e.to_string()))?
+            .into_ssl(hostname)
+            .map_err(|e| Pop3Error::Tls(e.to_string()))?;
+
+        let tcp_stream = TcpStream::connect(addr).await?;
+        let mut tls_stream =
+            SslStream::new(ssl, tcp_stream).map_err(|e| Pop3Error::Tls(e.to_string()))?;
+
+        std::pin::Pin::new(&mut tls_stream)
+            .connect()
+            .await
+            .map_err(|e| Pop3Error::Tls(e.to_string()))?;
+
+        let inner = InnerStream::OpensslTls(tls_stream);
+        let (read_half, write_half) = io::split(inner);
+        Ok(Transport {
+            reader: BufReader::new(read_half),
+            writer: write_half,
+            timeout,
+            encrypted: true,
+        })
+    }
+
     /// Stub for when no TLS feature is active.
     #[cfg(not(any(feature = "rustls-tls", feature = "openssl-tls")))]
     pub(crate) async fn connect_tls(
