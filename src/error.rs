@@ -9,7 +9,7 @@ pub enum Pop3Error {
 
     /// A TLS error occurred.
     #[error("TLS error: {0}")]
-    Tls(#[from] rustls::Error),
+    Tls(String),
 
     /// The hostname is not a valid DNS name for TLS.
     #[error("invalid DNS name: {0}")]

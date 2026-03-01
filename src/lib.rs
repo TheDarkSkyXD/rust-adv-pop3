@@ -23,6 +23,13 @@
 //! }
 //! ```
 
+#[cfg(all(feature = "rustls-tls", feature = "openssl-tls"))]
+compile_error!(
+    "Feature flags `rustls-tls` and `openssl-tls` are mutually exclusive. \
+     Enable only one: `cargo build --features rustls-tls` or \
+     `cargo build --no-default-features --features openssl-tls`."
+);
+
 mod client;
 mod error;
 pub(crate) mod response;
