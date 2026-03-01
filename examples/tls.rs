@@ -21,7 +21,10 @@ async fn main() -> pop3::Result<()> {
     client.login("user@gmail.com", "app-password").await?;
 
     let stat = client.stat().await?;
-    println!("{} messages, {} bytes", stat.message_count, stat.mailbox_size);
+    println!(
+        "{} messages, {} bytes",
+        stat.message_count, stat.mailbox_size
+    );
 
     let entries = client.list(None).await?;
     for entry in &entries {

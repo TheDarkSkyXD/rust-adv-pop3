@@ -9,11 +9,8 @@ use pop3::Pop3Client;
 #[tokio::main]
 async fn main() -> pop3::Result<()> {
     // Connect over plain TCP first
-    let mut client = Pop3Client::connect(
-        ("pop.example.com", 110),
-        std::time::Duration::from_secs(30),
-    )
-    .await?;
+    let mut client =
+        Pop3Client::connect(("pop.example.com", 110), std::time::Duration::from_secs(30)).await?;
 
     println!("Connected (encrypted: {})", client.is_encrypted());
 
@@ -25,7 +22,10 @@ async fn main() -> pop3::Result<()> {
     client.login("user", "password").await?;
 
     let stat = client.stat().await?;
-    println!("{} messages, {} bytes", stat.message_count, stat.mailbox_size);
+    println!(
+        "{} messages, {} bytes",
+        stat.message_count, stat.mailbox_size
+    );
 
     client.quit().await?;
     Ok(())
