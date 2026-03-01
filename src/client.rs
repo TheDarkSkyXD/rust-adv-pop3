@@ -51,6 +51,35 @@ impl Pop3Client {
         Self::connect(addr, crate::transport::DEFAULT_TIMEOUT).await
     }
 
+    /// Connect to a POP3 server over TLS (typically port 995).
+    ///
+    /// The `hostname` is used for TLS server name verification (SNI).
+    /// The `timeout` duration is applied to every read operation.
+    #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+    pub async fn connect_tls(
+        addr: impl tokio::net::ToSocketAddrs,
+        hostname: &str,
+        timeout: Duration,
+    ) -> Result<Self> {
+        let mut transport = Transport::connect_tls(addr, hostname, timeout).await?;
+        let greeting_line = transport.read_line().await?;
+        let greeting_text = response::parse_status_line(&greeting_line)?;
+        Ok(Pop3Client {
+            transport,
+            greeting: greeting_text.to_string(),
+            state: SessionState::Connected,
+        })
+    }
+
+    /// Connect over TLS with the default timeout (30 seconds).
+    #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+    pub async fn connect_tls_default(
+        addr: impl tokio::net::ToSocketAddrs,
+        hostname: &str,
+    ) -> Result<Self> {
+        Self::connect_tls(addr, hostname, crate::transport::DEFAULT_TIMEOUT).await
+    }
+
     /// Returns the server greeting message.
     pub fn greeting(&self) -> &str {
         &self.greeting
@@ -59,6 +88,11 @@ impl Pop3Client {
     /// Returns the current session state.
     pub fn state(&self) -> SessionState {
         self.state.clone()
+    }
+
+    /// Returns `true` if the connection is encrypted via TLS.
+    pub fn is_encrypted(&self) -> bool {
+        self.transport.is_encrypted()
     }
 
     /// Authenticate with the server using USER/PASS.
@@ -260,6 +294,22 @@ mod tests {
         // Compile-time proof that SessionState implements Debug
         let state = SessionState::Connected;
         let _ = format!("{:?}", state);
+    }
+
+    // --- is_encrypted: plain/mock connections are not encrypted ---
+
+    #[test]
+    fn is_encrypted_returns_false_for_plain_client() {
+        let mock = Builder::new().build();
+        let client = build_test_client(mock);
+        assert!(!client.is_encrypted());
+    }
+
+    #[test]
+    fn is_encrypted_returns_false_for_authenticated_client() {
+        let mock = Builder::new().build();
+        let client = build_authenticated_test_client(mock);
+        assert!(!client.is_encrypted());
     }
 
     // --- FIX-01: rset() must send "RSET\r\n", not "RETR\r\n" ---
@@ -664,6 +714,135 @@ mod tests {
             Pop3Error::ServerError(_) => {}
             other => panic!("expected ServerError, got: {other:?}"),
         }
+    }
+
+    // --- Multi-command integration flow tests ---
+
+    #[tokio::test]
+    async fn full_session_flow() {
+        let mock = Builder::new()
+            .write(b"USER alice\r\n")
+            .read(b"+OK\r\n")
+            .write(b"PASS secret\r\n")
+            .read(b"+OK logged in\r\n")
+            .write(b"STAT\r\n")
+            .read(b"+OK 2 5000\r\n")
+            .write(b"LIST\r\n")
+            .read(b"+OK\r\n1 2500\r\n2 2500\r\n.\r\n")
+            .write(b"RETR 1\r\n")
+            .read(b"+OK\r\nSubject: Hello\r\n\r\nBody\r\n.\r\n")
+            .write(b"QUIT\r\n")
+            .read(b"+OK goodbye\r\n")
+            .build();
+
+        let mut client = build_test_client(mock);
+
+        // Login
+        client.login("alice", "secret").await.unwrap();
+        assert_eq!(client.state(), SessionState::Authenticated);
+
+        // Stat
+        let stat = client.stat().await.unwrap();
+        assert_eq!(stat.message_count, 2);
+        assert_eq!(stat.mailbox_size, 5000);
+
+        // List all
+        let entries = client.list(None).await.unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].size, 2500);
+
+        // Retr
+        let msg = client.retr(1).await.unwrap();
+        assert!(msg.data.contains("Subject: Hello"));
+
+        // Quit (consumes client)
+        client.quit().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn capa_then_login_then_top_flow() {
+        let mock = Builder::new()
+            // CAPA before login
+            .write(b"CAPA\r\n")
+            .read(b"+OK\r\nTOP\r\nUIDL\r\nSASL PLAIN\r\nSTLS\r\n.\r\n")
+            // Login
+            .write(b"USER bob\r\n")
+            .read(b"+OK\r\n")
+            .write(b"PASS pass123\r\n")
+            .read(b"+OK welcome\r\n")
+            // TOP
+            .write(b"TOP 1 3\r\n")
+            .read(b"+OK\r\nFrom: sender@example.com\r\nSubject: Test\r\n\r\nLine 1\r\nLine 2\r\nLine 3\r\n.\r\n")
+            // QUIT
+            .write(b"QUIT\r\n")
+            .read(b"+OK bye\r\n")
+            .build();
+
+        let mut client = build_test_client(mock);
+
+        // CAPA (pre-auth, per RFC 2449)
+        let caps = client.capa().await.unwrap();
+        assert_eq!(caps.len(), 4);
+        assert!(caps.iter().any(|c| c.name == "TOP"));
+        assert!(caps.iter().any(|c| c.name == "STLS"));
+
+        // Login
+        client.login("bob", "pass123").await.unwrap();
+
+        // TOP 1 3 (headers + 3 lines)
+        let msg = client.top(1, 3).await.unwrap();
+        assert!(msg.data.contains("From: sender@example.com"));
+        assert!(msg.data.contains("Subject: Test"));
+        assert!(msg.data.contains("Line 1"));
+        assert!(msg.data.contains("Line 3"));
+
+        // Quit
+        client.quit().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn uidl_then_dele_then_rset_flow() {
+        let mock = Builder::new()
+            .write(b"USER user\r\n")
+            .read(b"+OK\r\n")
+            .write(b"PASS pass\r\n")
+            .read(b"+OK\r\n")
+            // UIDL all
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n1 msg-aaa\r\n2 msg-bbb\r\n3 msg-ccc\r\n.\r\n")
+            // DELE 2
+            .write(b"DELE 2\r\n")
+            .read(b"+OK message 2 deleted\r\n")
+            // RSET (undelete)
+            .write(b"RSET\r\n")
+            .read(b"+OK\r\n")
+            // NOOP
+            .write(b"NOOP\r\n")
+            .read(b"+OK\r\n")
+            // QUIT
+            .write(b"QUIT\r\n")
+            .read(b"+OK\r\n")
+            .build();
+
+        let mut client = build_test_client(mock);
+        client.login("user", "pass").await.unwrap();
+
+        // UIDL all
+        let uids = client.uidl(None).await.unwrap();
+        assert_eq!(uids.len(), 3);
+        assert_eq!(uids[1].unique_id, "msg-bbb");
+
+        // DELE
+        client.dele(2).await.unwrap();
+
+        // RSET (unmark deletion)
+        client.rset().await.unwrap();
+
+        // NOOP (keepalive)
+        client.noop().await.unwrap();
+
+        // Quit
+        client.quit().await.unwrap();
     }
 
     // --- Not-authenticated guard: commands require authentication ---
