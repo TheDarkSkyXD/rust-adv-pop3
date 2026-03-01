@@ -1,23 +1,15 @@
-use std::net::ToSocketAddrs;
+use std::time::Duration;
 
 use crate::error::{Pop3Error, Result};
 use crate::response;
 use crate::transport::Transport;
-use crate::types::{Capability, ListEntry, Message, Stat, UidlEntry};
-
-/// How to connect to the POP3 server.
-pub enum TlsMode {
-    /// Plain TCP (no encryption).
-    Plain,
-    /// TLS with the given hostname for certificate verification.
-    Tls(String),
-}
+use crate::types::{Capability, ListEntry, Message, SessionState, Stat, UidlEntry};
 
 /// A POP3 client connection.
 pub struct Pop3Client {
     transport: Transport,
     greeting: String,
-    authenticated: bool,
+    state: SessionState,
 }
 
 /// Check that a string does not contain CR or LF (CRLF injection protection).
@@ -39,24 +31,24 @@ fn validate_message_id(id: u32) -> Result<()> {
 }
 
 impl Pop3Client {
-    /// Connect to a POP3 server.
+    /// Connect to a POP3 server over plain TCP.
     ///
-    /// Use `TlsMode::Plain` for an unencrypted connection, or
-    /// `TlsMode::Tls(hostname)` for a TLS-encrypted connection.
-    pub fn connect(addr: impl ToSocketAddrs, tls: TlsMode) -> Result<Self> {
-        let mut transport = match tls {
-            TlsMode::Plain => Transport::connect_plain(addr)?,
-            TlsMode::Tls(ref hostname) => Transport::connect_tls(addr, hostname)?,
-        };
-
-        let greeting_line = transport.read_line()?;
+    /// The `timeout` duration is applied to every read operation for the lifetime
+    /// of this connection. Use `DEFAULT_TIMEOUT` for a sensible default (30s).
+    pub async fn connect(addr: impl tokio::net::ToSocketAddrs, timeout: Duration) -> Result<Self> {
+        let mut transport = Transport::connect_plain(addr, timeout).await?;
+        let greeting_line = transport.read_line().await?;
         let greeting_text = response::parse_status_line(&greeting_line)?;
-
         Ok(Pop3Client {
             transport,
             greeting: greeting_text.to_string(),
-            authenticated: false,
+            state: SessionState::Connected,
         })
+    }
+
+    /// Connect with the default timeout (30 seconds).
+    pub async fn connect_default(addr: impl tokio::net::ToSocketAddrs) -> Result<Self> {
+        Self::connect(addr, crate::transport::DEFAULT_TIMEOUT).await
     }
 
     /// Returns the server greeting message.
@@ -64,13 +56,22 @@ impl Pop3Client {
         &self.greeting
     }
 
+    /// Returns the current session state.
+    pub fn state(&self) -> SessionState {
+        self.state.clone()
+    }
+
     /// Authenticate with the server using USER/PASS.
-    pub fn login(&mut self, username: &str, password: &str) -> Result<()> {
+    pub async fn login(&mut self, username: &str, password: &str) -> Result<()> {
+        if self.state != SessionState::Connected {
+            return Err(Pop3Error::NotAuthenticated);
+        }
         check_no_crlf(username)?;
         check_no_crlf(password)?;
 
         // USER command — auth failure if rejected
         self.send_and_check(&format!("USER {username}"))
+            .await
             .map_err(|e| match e {
                 Pop3Error::ServerError(msg) => Pop3Error::AuthFailed(msg),
                 other => other,
@@ -78,37 +79,38 @@ impl Pop3Client {
 
         // PASS command — auth failure if rejected
         self.send_and_check(&format!("PASS {password}"))
+            .await
             .map_err(|e| match e {
                 Pop3Error::ServerError(msg) => Pop3Error::AuthFailed(msg),
                 other => other,
             })?;
 
         // Only set authenticated after both commands succeed
-        self.authenticated = true;
+        self.state = SessionState::Authenticated;
         Ok(())
     }
 
     /// Get mailbox statistics (message count and total size).
-    pub fn stat(&mut self) -> Result<Stat> {
+    pub async fn stat(&mut self) -> Result<Stat> {
         self.require_auth()?;
-        let text = self.send_and_check("STAT")?;
+        let text = self.send_and_check("STAT").await?;
         response::parse_stat(&text)
     }
 
     /// List messages. If `message_id` is `Some`, returns info for that message only.
     /// If `None`, returns info for all messages.
-    pub fn list(&mut self, message_id: Option<u32>) -> Result<Vec<ListEntry>> {
+    pub async fn list(&mut self, message_id: Option<u32>) -> Result<Vec<ListEntry>> {
         self.require_auth()?;
         match message_id {
             Some(id) => {
                 validate_message_id(id)?;
-                let text = self.send_and_check(&format!("LIST {id}"))?;
+                let text = self.send_and_check(&format!("LIST {id}")).await?;
                 let entry = response::parse_list_single(&text)?;
                 Ok(vec![entry])
             }
             None => {
-                self.send_and_check("LIST")?;
-                let body = self.transport.read_multiline()?;
+                self.send_and_check("LIST").await?;
+                let body = self.transport.read_multiline().await?;
                 response::parse_list_multi(&body)
             }
         }
@@ -116,87 +118,95 @@ impl Pop3Client {
 
     /// Get unique IDs for messages. If `message_id` is `Some`, returns the UID for that
     /// message only. If `None`, returns UIDs for all messages.
-    pub fn uidl(&mut self, message_id: Option<u32>) -> Result<Vec<UidlEntry>> {
+    pub async fn uidl(&mut self, message_id: Option<u32>) -> Result<Vec<UidlEntry>> {
         self.require_auth()?;
         match message_id {
             Some(id) => {
                 validate_message_id(id)?;
-                let text = self.send_and_check(&format!("UIDL {id}"))?;
+                let text = self.send_and_check(&format!("UIDL {id}")).await?;
                 let entry = response::parse_uidl_single(&text)?;
                 Ok(vec![entry])
             }
             None => {
-                self.send_and_check("UIDL")?;
-                let body = self.transport.read_multiline()?;
+                self.send_and_check("UIDL").await?;
+                let body = self.transport.read_multiline().await?;
                 response::parse_uidl_multi(&body)
             }
         }
     }
 
     /// Retrieve a message by its message number.
-    pub fn retr(&mut self, message_id: u32) -> Result<Message> {
+    pub async fn retr(&mut self, message_id: u32) -> Result<Message> {
         self.require_auth()?;
         validate_message_id(message_id)?;
-        self.send_and_check(&format!("RETR {message_id}"))?;
-        let data = self.transport.read_multiline()?;
+        self.send_and_check(&format!("RETR {message_id}")).await?;
+        let data = self.transport.read_multiline().await?;
         Ok(Message { data })
     }
 
     /// Mark a message for deletion.
-    pub fn dele(&mut self, message_id: u32) -> Result<()> {
+    pub async fn dele(&mut self, message_id: u32) -> Result<()> {
         self.require_auth()?;
         validate_message_id(message_id)?;
-        self.send_and_check(&format!("DELE {message_id}"))?;
+        self.send_and_check(&format!("DELE {message_id}")).await?;
         Ok(())
     }
 
     /// Reset the session — unmark all messages marked for deletion.
-    pub fn rset(&mut self) -> Result<()> {
+    pub async fn rset(&mut self) -> Result<()> {
         self.require_auth()?;
-        self.send_and_check("RSET")?;
+        self.send_and_check("RSET").await?;
         Ok(())
     }
 
     /// No-op, keeps the connection alive.
-    pub fn noop(&mut self) -> Result<()> {
+    pub async fn noop(&mut self) -> Result<()> {
         self.require_auth()?;
-        self.send_and_check("NOOP")?;
+        self.send_and_check("NOOP").await?;
         Ok(())
     }
 
     /// End the session. Messages marked for deletion are removed.
-    pub fn quit(&mut self) -> Result<()> {
-        self.send_and_check("QUIT")?;
-        self.authenticated = false;
+    ///
+    /// This method consumes the client, preventing any further use.
+    /// If the caller drops the client without calling quit(), the TCP
+    /// connection closes silently and pending DELE marks are NOT committed.
+    pub async fn quit(self) -> Result<()> {
+        let mut this = self;
+        this.transport.send_command("QUIT").await?;
+        let line = this.transport.read_line().await?;
+        response::parse_status_line(&line)?;
         Ok(())
+        // `this` is dropped here, TCP connection closes
     }
 
     /// Retrieve the headers and the first `lines` lines of a message body.
-    pub fn top(&mut self, message_id: u32, lines: u32) -> Result<Message> {
+    pub async fn top(&mut self, message_id: u32, lines: u32) -> Result<Message> {
         self.require_auth()?;
         validate_message_id(message_id)?;
-        self.send_and_check(&format!("TOP {message_id} {lines}"))?;
-        let data = self.transport.read_multiline()?;
+        self.send_and_check(&format!("TOP {message_id} {lines}"))
+            .await?;
+        let data = self.transport.read_multiline().await?;
         Ok(Message { data })
     }
 
     /// Query server capabilities.
-    pub fn capa(&mut self) -> Result<Vec<Capability>> {
-        self.send_and_check("CAPA")?;
-        let body = self.transport.read_multiline()?;
+    pub async fn capa(&mut self) -> Result<Vec<Capability>> {
+        self.send_and_check("CAPA").await?;
+        let body = self.transport.read_multiline().await?;
         Ok(response::parse_capa(&body))
     }
 
     /// Send a command to the server, read the status line, and return the status text.
-    fn send_and_check(&mut self, cmd: &str) -> Result<String> {
-        self.transport.send_command(cmd)?;
-        let line = self.transport.read_line()?;
+    async fn send_and_check(&mut self, cmd: &str) -> Result<String> {
+        self.transport.send_command(cmd).await?;
+        let line = self.transport.read_line().await?;
         let text = response::parse_status_line(&line)?;
         Ok(text.to_string())
     }
 
     fn require_auth(&self) -> Result<()> {
-        if !self.authenticated {
+        if self.state != SessionState::Authenticated {
             Err(Pop3Error::NotAuthenticated)
         } else {
             Ok(())
@@ -205,30 +215,29 @@ impl Pop3Client {
 }
 
 #[cfg(test)]
-fn build_test_client(
-    server_bytes: &[u8],
-) -> (Pop3Client, std::rc::Rc<std::cell::RefCell<Vec<u8>>>) {
-    let (transport, writer) = Transport::mock(server_bytes);
-    let client = Pop3Client {
+fn build_test_client(mock: tokio_test::io::Mock) -> Pop3Client {
+    let transport = Transport::mock(mock);
+    Pop3Client {
         transport,
         greeting: String::new(),
-        authenticated: false,
-    };
-    (client, writer)
+        state: SessionState::Connected,
+    }
 }
 
 #[cfg(test)]
-fn build_authenticated_test_client(
-    server_bytes: &[u8],
-) -> (Pop3Client, std::rc::Rc<std::cell::RefCell<Vec<u8>>>) {
-    let (mut client, writer) = build_test_client(server_bytes);
-    client.authenticated = true;
-    (client, writer)
+fn build_authenticated_test_client(mock: tokio_test::io::Mock) -> Pop3Client {
+    let transport = Transport::mock(mock);
+    Pop3Client {
+        transport,
+        greeting: String::new(),
+        state: SessionState::Authenticated,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio_test::io::Builder;
 
     #[test]
     fn test_crlf_injection_rejected() {
@@ -246,45 +255,61 @@ mod tests {
         assert!(validate_message_id(0).is_err());
     }
 
+    #[test]
+    fn session_state_derives_debug() {
+        // Compile-time proof that SessionState implements Debug
+        let state = SessionState::Connected;
+        let _ = format!("{:?}", state);
+    }
+
     // --- FIX-01: rset() must send "RSET\r\n", not "RETR\r\n" ---
 
-    #[test]
-    fn rset_sends_correct_command_fix01() {
-        let (mut client, writer) = build_authenticated_test_client(b"+OK\r\n");
-        client.rset().unwrap();
-        let sent = writer.borrow();
-        assert_eq!(&*sent, b"RSET\r\n", "FIX-01: rset must send RSET, not RETR");
+    #[tokio::test]
+    async fn rset_sends_correct_command_fix01() {
+        let mock = Builder::new().write(b"RSET\r\n").read(b"+OK\r\n").build();
+        let mut client = build_authenticated_test_client(mock);
+        client.rset().await.unwrap();
     }
 
     // --- FIX-02: noop() must send "NOOP\r\n" (uppercase) ---
 
-    #[test]
-    fn noop_sends_correct_command_fix02() {
-        let (mut client, writer) = build_authenticated_test_client(b"+OK\r\n");
-        client.noop().unwrap();
-        let sent = writer.borrow();
-        assert_eq!(
-            &*sent, b"NOOP\r\n",
-            "FIX-02: noop must send NOOP (uppercase)"
-        );
+    #[tokio::test]
+    async fn noop_sends_correct_command_fix02() {
+        let mock = Builder::new().write(b"NOOP\r\n").read(b"+OK\r\n").build();
+        let mut client = build_authenticated_test_client(mock);
+        client.noop().await.unwrap();
     }
 
     // --- FIX-03: login() sets authenticated only after both USER and PASS succeed ---
 
-    #[test]
-    fn login_sets_authenticated_after_pass_ok_fix03() {
-        let (mut client, _) = build_test_client(b"+OK\r\n+OK logged in\r\n");
-        client.login("user", "pass").unwrap();
-        assert!(client.authenticated);
+    #[tokio::test]
+    async fn login_sets_authenticated_after_pass_ok_fix03() {
+        let mock = Builder::new()
+            .write(b"USER user\r\n")
+            .read(b"+OK\r\n")
+            .write(b"PASS pass\r\n")
+            .read(b"+OK logged in\r\n")
+            .build();
+        let mut client = build_test_client(mock);
+        assert_eq!(client.state(), SessionState::Connected);
+        client.login("user", "pass").await.unwrap();
+        assert_eq!(client.state(), SessionState::Authenticated);
     }
 
-    #[test]
-    fn login_not_authenticated_when_pass_fails_fix03() {
-        let (mut client, _) = build_test_client(b"+OK\r\n-ERR invalid password\r\n");
-        let result = client.login("user", "wrongpass");
+    #[tokio::test]
+    async fn login_not_authenticated_when_pass_fails_fix03() {
+        let mock = Builder::new()
+            .write(b"USER user\r\n")
+            .read(b"+OK\r\n")
+            .write(b"PASS wrongpass\r\n")
+            .read(b"-ERR invalid password\r\n")
+            .build();
+        let mut client = build_test_client(mock);
+        let result = client.login("user", "wrongpass").await;
         assert!(result.is_err());
-        assert!(
-            !client.authenticated,
+        assert_eq!(
+            client.state(),
+            SessionState::Connected,
             "FIX-03: must NOT set authenticated when PASS returns -ERR"
         );
         match result.unwrap_err() {
@@ -295,71 +320,97 @@ mod tests {
 
     // --- FIX-04: list round-trip validates parse_list_single via mock I/O ---
 
-    #[test]
-    fn list_single_round_trip_fix04() {
-        let (mut client, writer) = build_authenticated_test_client(b"+OK 1 1234\r\n");
-        let entries = client.list(Some(1)).unwrap();
+    #[tokio::test]
+    async fn list_single_round_trip_fix04() {
+        let mock = Builder::new()
+            .write(b"LIST 1\r\n")
+            .read(b"+OK 1 1234\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let entries = client.list(Some(1)).await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].message_id, 1);
         assert_eq!(entries[0].size, 1234);
-        let sent = writer.borrow();
-        assert_eq!(
-            &*sent, b"LIST 1\r\n",
-            "FIX-04: LIST 1 wire command must be correct"
-        );
     }
 
     // --- Login happy and error paths ---
 
-    #[test]
-    fn login_happy_path() {
-        let (mut client, _) = build_test_client(b"+OK\r\n+OK logged in\r\n");
-        let result = client.login("alice", "secret");
+    #[tokio::test]
+    async fn login_happy_path() {
+        let mock = Builder::new()
+            .write(b"USER alice\r\n")
+            .read(b"+OK\r\n")
+            .write(b"PASS secret\r\n")
+            .read(b"+OK logged in\r\n")
+            .build();
+        let mut client = build_test_client(mock);
+        let result = client.login("alice", "secret").await;
         assert!(result.is_ok());
-        assert!(client.authenticated);
+        assert_eq!(client.state(), SessionState::Authenticated);
     }
 
-    #[test]
-    fn login_user_command_rejected_returns_auth_failed() {
-        let (mut client, _) = build_test_client(b"-ERR no such user\r\n");
-        let result = client.login("nobody", "pass");
+    #[tokio::test]
+    async fn login_user_command_rejected_returns_auth_failed() {
+        let mock = Builder::new()
+            .write(b"USER nobody\r\n")
+            .read(b"-ERR no such user\r\n")
+            .build();
+        let mut client = build_test_client(mock);
+        let result = client.login("nobody", "pass").await;
         assert!(result.is_err());
-        assert!(!client.authenticated);
+        assert_eq!(client.state(), SessionState::Connected);
         match result.unwrap_err() {
             Pop3Error::AuthFailed(msg) => assert!(msg.contains("no such user")),
             other => panic!("expected AuthFailed, got: {other:?}"),
         }
     }
 
-    #[test]
-    fn login_rejects_crlf_in_username() {
-        let (mut client, _) = build_test_client(b"");
-        let result = client.login("user\r\nINJECT", "pass");
+    #[tokio::test]
+    async fn login_rejects_crlf_in_username() {
+        let mock = Builder::new().build();
+        let mut client = build_test_client(mock);
+        let result = client.login("user\r\nINJECT", "pass").await;
         assert!(matches!(result.unwrap_err(), Pop3Error::InvalidInput));
     }
 
-    #[test]
-    fn login_rejects_crlf_in_password() {
-        let (mut client, _) = build_test_client(b"");
-        let result = client.login("user", "pass\r\nINJECT");
+    #[tokio::test]
+    async fn login_rejects_crlf_in_password() {
+        let mock = Builder::new().build();
+        let mut client = build_test_client(mock);
+        let result = client.login("user", "pass\r\nINJECT").await;
         assert!(matches!(result.unwrap_err(), Pop3Error::InvalidInput));
+    }
+
+    #[tokio::test]
+    async fn login_rejects_when_already_authenticated() {
+        let mock = Builder::new().build();
+        let mut client = build_authenticated_test_client(mock);
+        let result = client.login("user", "pass").await;
+        assert!(matches!(result, Err(Pop3Error::NotAuthenticated)));
     }
 
     // --- stat happy and error paths ---
 
-    #[test]
-    fn stat_happy_path() {
-        let (mut client, writer) = build_authenticated_test_client(b"+OK 5 12345\r\n");
-        let stat = client.stat().unwrap();
+    #[tokio::test]
+    async fn stat_happy_path() {
+        let mock = Builder::new()
+            .write(b"STAT\r\n")
+            .read(b"+OK 5 12345\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let stat = client.stat().await.unwrap();
         assert_eq!(stat.message_count, 5);
         assert_eq!(stat.mailbox_size, 12345);
-        assert_eq!(&*writer.borrow(), b"STAT\r\n");
     }
 
-    #[test]
-    fn stat_server_error() {
-        let (mut client, _) = build_authenticated_test_client(b"-ERR mailbox locked\r\n");
-        let result = client.stat();
+    #[tokio::test]
+    async fn stat_server_error() {
+        let mock = Builder::new()
+            .write(b"STAT\r\n")
+            .read(b"-ERR mailbox locked\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let result = client.stat().await;
         assert!(result.is_err());
         match result.unwrap_err() {
             Pop3Error::ServerError(msg) => assert!(msg.contains("mailbox locked")),
@@ -369,20 +420,27 @@ mod tests {
 
     // --- list single happy and error paths ---
 
-    #[test]
-    fn list_single_happy_path() {
-        let (mut client, writer) = build_authenticated_test_client(b"+OK 1 1234\r\n");
-        let entries = client.list(Some(1)).unwrap();
+    #[tokio::test]
+    async fn list_single_happy_path() {
+        let mock = Builder::new()
+            .write(b"LIST 1\r\n")
+            .read(b"+OK 1 1234\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let entries = client.list(Some(1)).await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].message_id, 1);
         assert_eq!(entries[0].size, 1234);
-        assert_eq!(&*writer.borrow(), b"LIST 1\r\n");
     }
 
-    #[test]
-    fn list_single_server_error() {
-        let (mut client, _) = build_authenticated_test_client(b"-ERR no such message\r\n");
-        let result = client.list(Some(99));
+    #[tokio::test]
+    async fn list_single_server_error() {
+        let mock = Builder::new()
+            .write(b"LIST 99\r\n")
+            .read(b"-ERR no such message\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let result = client.list(Some(99)).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             Pop3Error::ServerError(msg) => assert!(msg.contains("no such message")),
@@ -390,35 +448,43 @@ mod tests {
         }
     }
 
-    #[test]
-    fn list_all_happy_path() {
-        let server_response = b"+OK\r\n1 100\r\n2 200\r\n.\r\n";
-        let (mut client, writer) = build_authenticated_test_client(server_response);
-        let entries = client.list(None).unwrap();
+    #[tokio::test]
+    async fn list_all_happy_path() {
+        let mock = Builder::new()
+            .write(b"LIST\r\n")
+            .read(b"+OK\r\n1 100\r\n2 200\r\n.\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let entries = client.list(None).await.unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].message_id, 1);
         assert_eq!(entries[0].size, 100);
         assert_eq!(entries[1].message_id, 2);
         assert_eq!(entries[1].size, 200);
-        assert_eq!(&*writer.borrow(), b"LIST\r\n");
     }
 
     // --- retr happy, error, and dot-unstuffing paths ---
 
-    #[test]
-    fn retr_happy_path() {
-        let server = b"+OK\r\nSubject: Test\r\n\r\nBody line 1\r\n.\r\n";
-        let (mut client, writer) = build_authenticated_test_client(server);
-        let msg = client.retr(1).unwrap();
+    #[tokio::test]
+    async fn retr_happy_path() {
+        let mock = Builder::new()
+            .write(b"RETR 1\r\n")
+            .read(b"+OK\r\nSubject: Test\r\n\r\nBody line 1\r\n.\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let msg = client.retr(1).await.unwrap();
         assert!(msg.data.contains("Subject: Test"));
         assert!(msg.data.contains("Body line 1"));
-        assert_eq!(&*writer.borrow(), b"RETR 1\r\n");
     }
 
-    #[test]
-    fn retr_server_error() {
-        let (mut client, _) = build_authenticated_test_client(b"-ERR no such message\r\n");
-        let result = client.retr(1);
+    #[tokio::test]
+    async fn retr_server_error() {
+        let mock = Builder::new()
+            .write(b"RETR 1\r\n")
+            .read(b"-ERR no such message\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let result = client.retr(1).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             Pop3Error::ServerError(_) => {}
@@ -426,12 +492,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn retr_dot_unstuffing() {
+    #[tokio::test]
+    async fn retr_dot_unstuffing() {
         // Server sends a line starting with ".." which should become "."
-        let server = b"+OK\r\n..This had a leading dot\r\nNormal line\r\n.\r\n";
-        let (mut client, _) = build_authenticated_test_client(server);
-        let msg = client.retr(1).unwrap();
+        let mock = Builder::new()
+            .write(b"RETR 1\r\n")
+            .read(b"+OK\r\n..This had a leading dot\r\nNormal line\r\n.\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let msg = client.retr(1).await.unwrap();
         assert!(
             msg.data.contains(".This had a leading dot"),
             "dot-unstuffing must remove one leading dot"
@@ -444,17 +513,24 @@ mod tests {
 
     // --- dele happy and error paths ---
 
-    #[test]
-    fn dele_happy_path() {
-        let (mut client, writer) = build_authenticated_test_client(b"+OK message deleted\r\n");
-        client.dele(1).unwrap();
-        assert_eq!(&*writer.borrow(), b"DELE 1\r\n");
+    #[tokio::test]
+    async fn dele_happy_path() {
+        let mock = Builder::new()
+            .write(b"DELE 1\r\n")
+            .read(b"+OK message deleted\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        client.dele(1).await.unwrap();
     }
 
-    #[test]
-    fn dele_server_error() {
-        let (mut client, _) = build_authenticated_test_client(b"-ERR message locked\r\n");
-        let result = client.dele(1);
+    #[tokio::test]
+    async fn dele_server_error() {
+        let mock = Builder::new()
+            .write(b"DELE 1\r\n")
+            .read(b"-ERR message locked\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let result = client.dele(1).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             Pop3Error::ServerError(_) => {}
@@ -464,33 +540,42 @@ mod tests {
 
     // --- uidl single, all, and error paths ---
 
-    #[test]
-    fn uidl_single_happy_path() {
-        let (mut client, writer) = build_authenticated_test_client(b"+OK 1 abc123\r\n");
-        let entries = client.uidl(Some(1)).unwrap();
+    #[tokio::test]
+    async fn uidl_single_happy_path() {
+        let mock = Builder::new()
+            .write(b"UIDL 1\r\n")
+            .read(b"+OK 1 abc123\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let entries = client.uidl(Some(1)).await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].message_id, 1);
         assert_eq!(entries[0].unique_id, "abc123");
-        assert_eq!(&*writer.borrow(), b"UIDL 1\r\n");
     }
 
-    #[test]
-    fn uidl_all_happy_path() {
-        let server = b"+OK\r\n1 uid-a\r\n2 uid-b\r\n.\r\n";
-        let (mut client, writer) = build_authenticated_test_client(server);
-        let entries = client.uidl(None).unwrap();
+    #[tokio::test]
+    async fn uidl_all_happy_path() {
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n1 uid-a\r\n2 uid-b\r\n.\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let entries = client.uidl(None).await.unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].message_id, 1);
         assert_eq!(entries[0].unique_id, "uid-a");
         assert_eq!(entries[1].message_id, 2);
         assert_eq!(entries[1].unique_id, "uid-b");
-        assert_eq!(&*writer.borrow(), b"UIDL\r\n");
     }
 
-    #[test]
-    fn uidl_server_error() {
-        let (mut client, _) = build_authenticated_test_client(b"-ERR\r\n");
-        let result = client.uidl(Some(1));
+    #[tokio::test]
+    async fn uidl_server_error() {
+        let mock = Builder::new()
+            .write(b"UIDL 1\r\n")
+            .read(b"-ERR\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let result = client.uidl(Some(1)).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             Pop3Error::ServerError(_) => {}
@@ -498,38 +583,53 @@ mod tests {
         }
     }
 
-    // --- quit happy path and authenticated flag reset ---
+    // --- quit happy path and move semantics ---
 
-    #[test]
-    fn quit_happy_path() {
-        let (mut client, writer) = build_authenticated_test_client(b"+OK goodbye\r\n");
-        client.quit().unwrap();
-        assert_eq!(&*writer.borrow(), b"QUIT\r\n");
+    #[tokio::test]
+    async fn quit_happy_path() {
+        let mock = Builder::new()
+            .write(b"QUIT\r\n")
+            .read(b"+OK goodbye\r\n")
+            .build();
+        let client = build_authenticated_test_client(mock);
+        client.quit().await.unwrap();
+        // client is consumed — cannot use after this line (compile-time guarantee)
     }
 
-    #[test]
-    fn quit_resets_authenticated() {
-        let (mut client, _) = build_authenticated_test_client(b"+OK goodbye\r\n");
-        assert!(client.authenticated);
-        client.quit().unwrap();
-        assert!(!client.authenticated, "quit must set authenticated=false");
+    #[tokio::test]
+    async fn quit_consumes_client() {
+        let mock = Builder::new()
+            .write(b"QUIT\r\n")
+            .read(b"+OK goodbye\r\n")
+            .build();
+        let client = build_authenticated_test_client(mock);
+        assert_eq!(client.state(), SessionState::Authenticated);
+        client.quit().await.unwrap();
+        // Uncomment to verify compile error:
+        // client.stat().await; // error[E0382]: borrow of moved value
     }
 
     // --- capa happy and error paths ---
 
-    #[test]
-    fn capa_happy_path() {
-        let server = b"+OK\r\nTOP\r\nUIDL\r\nSASL PLAIN\r\n.\r\n";
-        let (mut client, writer) = build_test_client(server);
-        let caps = client.capa().unwrap();
+    #[tokio::test]
+    async fn capa_happy_path() {
+        let mock = Builder::new()
+            .write(b"CAPA\r\n")
+            .read(b"+OK\r\nTOP\r\nUIDL\r\nSASL PLAIN\r\n.\r\n")
+            .build();
+        let mut client = build_test_client(mock);
+        let caps = client.capa().await.unwrap();
         assert_eq!(caps.len(), 3);
-        assert_eq!(&*writer.borrow(), b"CAPA\r\n");
     }
 
-    #[test]
-    fn capa_server_error() {
-        let (mut client, _) = build_test_client(b"-ERR not supported\r\n");
-        let result = client.capa();
+    #[tokio::test]
+    async fn capa_server_error() {
+        let mock = Builder::new()
+            .write(b"CAPA\r\n")
+            .read(b"-ERR not supported\r\n")
+            .build();
+        let mut client = build_test_client(mock);
+        let result = client.capa().await;
         assert!(result.is_err());
         match result.unwrap_err() {
             Pop3Error::ServerError(_) => {}
@@ -539,20 +639,26 @@ mod tests {
 
     // --- top happy and error paths ---
 
-    #[test]
-    fn top_happy_path() {
-        let server = b"+OK\r\nSubject: Test\r\n\r\nFirst line\r\n.\r\n";
-        let (mut client, writer) = build_authenticated_test_client(server);
-        let msg = client.top(1, 5).unwrap();
+    #[tokio::test]
+    async fn top_happy_path() {
+        let mock = Builder::new()
+            .write(b"TOP 1 5\r\n")
+            .read(b"+OK\r\nSubject: Test\r\n\r\nFirst line\r\n.\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let msg = client.top(1, 5).await.unwrap();
         assert!(msg.data.contains("Subject: Test"));
         assert!(msg.data.contains("First line"));
-        assert_eq!(&*writer.borrow(), b"TOP 1 5\r\n");
     }
 
-    #[test]
-    fn top_server_error() {
-        let (mut client, _) = build_authenticated_test_client(b"-ERR no such message\r\n");
-        let result = client.top(1, 5);
+    #[tokio::test]
+    async fn top_server_error() {
+        let mock = Builder::new()
+            .write(b"TOP 1 5\r\n")
+            .read(b"-ERR no such message\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let result = client.top(1, 5).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             Pop3Error::ServerError(_) => {}
@@ -562,22 +668,35 @@ mod tests {
 
     // --- Not-authenticated guard: commands require authentication ---
 
-    #[test]
-    fn commands_require_authentication() {
-        let (mut client, _) = build_test_client(b"");
-        assert!(matches!(client.stat(), Err(Pop3Error::NotAuthenticated)));
-
-        // Re-create because the mock buffer is consumed
-        let (mut client, _) = build_test_client(b"");
+    #[tokio::test]
+    async fn commands_require_authentication() {
+        let mock = Builder::new().build();
+        let mut client = build_test_client(mock);
         assert!(matches!(
-            client.list(None),
+            client.stat().await,
             Err(Pop3Error::NotAuthenticated)
         ));
 
-        let (mut client, _) = build_test_client(b"");
-        assert!(matches!(client.retr(1), Err(Pop3Error::NotAuthenticated)));
+        // Each command needs its own mock since stat() consumed the mock
+        let mock = Builder::new().build();
+        let mut client = build_test_client(mock);
+        assert!(matches!(
+            client.list(None).await,
+            Err(Pop3Error::NotAuthenticated)
+        ));
 
-        let (mut client, _) = build_test_client(b"");
-        assert!(matches!(client.dele(1), Err(Pop3Error::NotAuthenticated)));
+        let mock = Builder::new().build();
+        let mut client = build_test_client(mock);
+        assert!(matches!(
+            client.retr(1).await,
+            Err(Pop3Error::NotAuthenticated)
+        ));
+
+        let mock = Builder::new().build();
+        let mut client = build_test_client(mock);
+        assert!(matches!(
+            client.dele(1).await,
+            Err(Pop3Error::NotAuthenticated)
+        ));
     }
 }

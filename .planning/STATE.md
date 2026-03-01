@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-03-01T19:19:00.097Z"
+last_updated: "2026-03-01T20:09:00.000Z"
 progress:
-  total_phases: 1
-  completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
+  total_phases: 2
+  completed_phases: 2
+  total_plans: 5
+  completed_plans: 5
 ---
 
 # Project State
@@ -18,32 +18,33 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-01)
 
 **Core value:** Provide a correct, async, production-quality POP3 client that handles errors gracefully instead of panicking
-**Current focus:** Phase 1 — Foundation
+**Current focus:** Phase 2 — Async Core (complete)
 
 ## Current Position
 
-Phase: 1 of 9 (Foundation)
-Plan: 2 of 2 in current phase (COMPLETE)
-Status: Phase 1 complete — ready for Phase 2
-Last activity: 2026-03-01 — Completed 01-02 (15 new mock I/O tests, full QUAL-01 coverage for all POP3 commands)
+Phase: 2 of 9 (Async Core)
+Plan: 3 of 3 in current phase (COMPLETE)
+Status: Phase 2 complete — ready for Phase 3
+Last activity: 2026-03-01 — Completed 02-03 (GitHub Actions CI workflow, async Pop3Client migration with SessionState)
 
-Progress: [██░░░░░░░░] 11%
+Progress: [████░░░░░░] 22%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 2
-- Average duration: 20 min
-- Total execution time: 40 min
+- Total plans completed: 5
+- Average duration: ~15 min
+- Total execution time: ~75 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01-foundation | 2 | 40 min | 20 min |
+| 02-async-core | 3 | ~35 min | ~12 min |
 
 **Recent Trend:**
-- Last 5 plans: 25 min, 15 min
+- Last 5 plans: 25 min, 15 min, ~20 min, ~11 min, 4 min
 - Trend: accelerating
 
 *Updated after each plan completion*
@@ -60,6 +61,11 @@ Recent decisions affecting current work:
 - [01-01]: Stream::Mock confined entirely to #[cfg(test)] — no public API leakage, no type parameter on Pop3Client
 - [01-02]: UidlEntry field is unique_id not uid — corrected from plan template, confirmed by compiler
 - [01-02]: capa() and quit() use build_test_client (not authenticated) as production code does not call require_auth() for these
+- [02-03]: CI uses dtolnay/rust-toolchain@stable (not actions-rs/*) on ubuntu-latest only — cross-platform deferred to Phase 3
+- [02-03]: TlsMode enum removed from Phase 2 public API — Phase 3 reintroduces TLS connection methods
+- [02-03]: quit(self) consumes the client — move semantics provide compile-time use-after-disconnect prevention
+- [02-03]: SessionState replaces authenticated: bool — enables callers to match on Connected/Authenticated/Disconnected
+- [02-03]: login() returns NotAuthenticated if state != Connected — prevents double-login bugs
 - [Roadmap]: Async with tokio — industry standard, largest ecosystem
 - [Roadmap]: Dual TLS via feature flags (openssl + rustls) — mutual exclusion enforced by compile_error!
 - [Roadmap]: Major version bump to v2.0 — API breaking changes justify semver major
@@ -90,5 +96,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed 01-02-PLAN.md — 15 new mock I/O tests (retr, dele, uidl, quit, capa, top), full QUAL-01 coverage, Phase 1 complete. Ready for Phase 2 async rewrite.
+Stopped at: Completed 02-03-PLAN.md — GitHub Actions CI workflow (test/clippy/fmt on ubuntu-latest), async Pop3Client with SessionState, quit(self) move semantics. Phase 2 complete. Ready for Phase 3 TLS.
 Resume file: None

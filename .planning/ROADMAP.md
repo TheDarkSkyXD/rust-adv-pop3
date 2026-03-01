@@ -18,7 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **v2.0 Phases:**
 - [x] **Phase 1: Foundation** - Fix known bugs, establish error handling, and build test infrastructure
-- [ ] **Phase 2: Async Core** - Migrate all I/O to async/await, port all v1 commands, set up CI
+- [x] **Phase 2: Async Core** - Migrate all I/O to async/await, port all v1 commands, set up CI
 - [ ] **Phase 3: TLS and Publish** - Add dual TLS backends, remaining commands, docs, and ship v2.0.0
 - [ ] **Phase 4: Protocol Extensions** - Add APOP, RESP-CODES, and builder pattern API
 
@@ -48,19 +48,22 @@ Decimal phases appear between their surrounding integers in numeric order.
 ### Phase 2: Async Core
 **Goal**: All public API methods are async and work over a plain TCP connection — developers can connect, authenticate, and run every v1.0.6 command against a real server with no blocking calls
 **Depends on**: Phase 1
-**Requirements**: ASYNC-01, ASYNC-02, ASYNC-03, ASYNC-04, ASYNC-05, API-03, API-04, QUAL-03, QUAL-04
+**Requirements**: ASYNC-01, ASYNC-02, ASYNC-03, ASYNC-04, ASYNC-05, API-03, API-04, QUAL-03
 **Success Criteria** (what must be TRUE):
   1. A caller can `await` any library method inside a `#[tokio::main]` function with no `block_on` wrappers
   2. All v1.0.6 commands (STAT, LIST, UIDL, RETR, DELE, NOOP, RSET, QUIT) work correctly over a plain TCP connection confirmed by integration tests against a mock server
   3. Multi-line responses (RETR, LIST all, UIDL all) are correctly dot-unstuffed per RFC 1939
   4. Calling `quit()` consumes the client value — the compiler rejects any further method calls on the same variable after disconnect
   5. GitHub Actions CI passes `cargo test`, `cargo clippy -D warnings`, and `cargo fmt --check` on every push
-**Plans**: TBD
+**Plans:** 3/3 plans complete
+- [x] 02-01-PLAN.md — Tokio dependencies, Pop3Error::Timeout, and async transport rewrite (ASYNC-02, ASYNC-03, ASYNC-05)
+- [x] 02-02-PLAN.md — Async Pop3Client with SessionState, quit(self), and test migration (ASYNC-01, ASYNC-04, API-03, API-04)
+- [x] 02-03-PLAN.md — GitHub Actions CI workflow (QUAL-03)
 
 ### Phase 3: TLS and Publish
 **Goal**: Library users can connect to port 995 TLS servers using either rustls or openssl, CAPA and TOP work, docs are complete, and v2.0.0 is published to crates.io
 **Depends on**: Phase 2
-**Requirements**: TLS-01, TLS-02, TLS-03, TLS-04, TLS-05, TLS-06, CMD-01, CMD-02, QUAL-02, QUAL-05
+**Requirements**: TLS-01, TLS-02, TLS-03, TLS-04, TLS-05, TLS-06, CMD-01, CMD-02, QUAL-02, QUAL-04, QUAL-05
 **Success Criteria** (what must be TRUE):
   1. A user can connect to a port 995 POP3 server by selecting either `--features rustls-tls` or `--features openssl-tls` — only one backend is needed, and both produce identical public API behaviour
   2. Activating both TLS feature flags simultaneously produces a `compile_error!` at build time (not a runtime error)
@@ -141,7 +144,7 @@ v3.0 phases execute in order: 5 → 6 → 7 → 8 → 9 (Phase 6 can run in para
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation | 2/2 | Complete | 2026-03-01 |
-| 2. Async Core | 0/? | Not started | - |
+| 2. Async Core | 3/3 | Complete   | 2026-03-01 |
 | 3. TLS and Publish | 0/? | Not started | - |
 | 4. Protocol Extensions | 0/? | Not started | - |
 | 5. Pipelining | 0/? | Not started | - |

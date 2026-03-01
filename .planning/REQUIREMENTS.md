@@ -23,11 +23,11 @@ Requirements for v2.0 release. Each maps to roadmap phases.
 
 ### Async I/O
 
-- [ ] **ASYNC-01**: All public API methods are `async fn` using tokio runtime
-- [ ] **ASYNC-02**: Reads use `tokio::io::BufReader` with line-oriented buffering
-- [ ] **ASYNC-03**: Multi-line responses correctly handle RFC 1939 dot-unstuffing
-- [ ] **ASYNC-04**: Session state tracked via `SessionState` enum (not a public bool field)
-- [ ] **ASYNC-05**: Connection supports configurable read/write timeouts
+- [x] **ASYNC-01**: All public API methods are `async fn` using tokio runtime
+- [x] **ASYNC-02**: Reads use `tokio::io::BufReader` with line-oriented buffering
+- [x] **ASYNC-03**: Multi-line responses correctly handle RFC 1939 dot-unstuffing
+- [x] **ASYNC-04**: Session state tracked via `SessionState` enum (not a public bool field)
+- [x] **ASYNC-05**: Connection supports configurable read/write timeouts
 
 ### TLS
 
@@ -49,14 +49,14 @@ Requirements for v2.0 release. Each maps to roadmap phases.
 
 - [ ] **API-01**: `Pop3ClientBuilder` provides a fluent interface for connection configuration
 - [ ] **API-02**: Builder hides TLS feature flag complexity from callers
-- [ ] **API-03**: All public types derive `Debug`
-- [ ] **API-04**: `Client` consumes `self` on `quit()` preventing use-after-disconnect
+- [x] **API-03**: All public types derive `Debug`
+- [x] **API-04**: `Client` consumes `self` on `quit()` preventing use-after-disconnect
 
 ### Quality
 
 - [x] **QUAL-01**: Unit tests cover all response parsing functions via mock I/O
 - [ ] **QUAL-02**: Integration tests cover connect, auth, and command flows via mock POP3 server
-- [ ] **QUAL-03**: GitHub Actions CI runs tests, clippy, and format checks
+- [x] **QUAL-03**: GitHub Actions CI runs tests, clippy, and format checks
 - [ ] **QUAL-04**: CI matrix tests both `rustls-tls` and `openssl-tls` feature flags
 - [ ] **QUAL-05**: All public items have rustdoc with working doctests
 
@@ -137,15 +137,14 @@ Which phases cover which requirements. Updated during roadmap creation.
 | FIX-03 | Phase 1 | Complete (01-01) |
 | FIX-04 | Phase 1 | Complete (01-01) |
 | QUAL-01 | Phase 1 | Complete (01-02) |
-| ASYNC-01 | Phase 2 | Pending |
-| ASYNC-02 | Phase 2 | Pending |
-| ASYNC-03 | Phase 2 | Pending |
-| ASYNC-04 | Phase 2 | Pending |
-| ASYNC-05 | Phase 2 | Pending |
-| API-03 | Phase 2 | Pending |
-| API-04 | Phase 2 | Pending |
-| QUAL-03 | Phase 2 | Pending |
-| QUAL-04 | Phase 2 | Pending |
+| ASYNC-01 | Phase 2 | Complete |
+| ASYNC-02 | Phase 2 | Complete |
+| ASYNC-03 | Phase 2 | Complete |
+| ASYNC-04 | Phase 2 | Complete |
+| ASYNC-05 | Phase 2 | Complete |
+| API-03 | Phase 2 | Complete |
+| API-04 | Phase 2 | Complete |
+| QUAL-03 | Phase 2 | Complete |
 | TLS-01 | Phase 3 | Pending |
 | TLS-02 | Phase 3 | Pending |
 | TLS-03 | Phase 3 | Pending |
@@ -155,6 +154,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CMD-01 | Phase 3 | Pending |
 | CMD-02 | Phase 3 | Pending |
 | QUAL-02 | Phase 3 | Pending |
+| QUAL-04 | Phase 3 | Pending |
 | QUAL-05 | Phase 3 | Pending |
 | CMD-03 | Phase 4 | Pending |
 | CMD-04 | Phase 4 | Pending |
@@ -181,8 +181,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 **Coverage:**
 - v2.0 requirements: 32 total, mapped to phases 1-4: 32
 - v3.0 requirements: 17 total, mapped to phases 5-9: 17
-- Unmapped: 0 ✓
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-01*
-*Last updated: 2026-03-01 after plan 01-02 completion — FOUND-01..04, FIX-01..04, QUAL-01 all complete; Phase 1 done*
+*Last updated: 2026-03-01 after Phase 2 plan revision — QUAL-04 moved from Phase 2 to Phase 3 (TLS feature flag matrix requires TLS code)*

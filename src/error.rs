@@ -34,6 +34,10 @@ pub enum Pop3Error {
     /// The input contains invalid characters (e.g. CRLF injection).
     #[error("invalid input: CRLF injection detected")]
     InvalidInput,
+
+    /// The operation timed out waiting for the server.
+    #[error("timed out")]
+    Timeout,
 }
 
 /// A specialized `Result` type for POP3 operations.
