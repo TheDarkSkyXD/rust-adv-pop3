@@ -3,7 +3,7 @@
 **Defined:** 2026-03-01
 **Core Value:** Provide a correct, async, production-quality POP3 client that handles errors gracefully instead of panicking
 
-## v1 Requirements
+## v2.0 Requirements
 
 Requirements for v2.0 release. Each maps to roadmap phases.
 
@@ -60,7 +60,7 @@ Requirements for v2.0 release. Each maps to roadmap phases.
 - [ ] **QUAL-04**: CI matrix tests both `rustls-tls` and `openssl-tls` feature flags
 - [ ] **QUAL-05**: All public items have rustdoc with working doctests
 
-## v2 Requirements
+## v3.0 Requirements
 
 Requirements for v3.0 release. Each maps to roadmap phases 5+.
 
@@ -96,7 +96,7 @@ Requirements for v3.0 release. Each maps to roadmap phases 5+.
 - [ ] **MIME-01**: Client provides `retr_parsed()` method behind a `mime` feature flag
 - [ ] **MIME-02**: MIME integration uses `mail-parser` crate (zero external deps, RFC 5322 + MIME conformant)
 
-## v3 Requirements
+## v4.0 Requirements
 
 Deferred to future release. Tracked but not in current roadmap.
 
