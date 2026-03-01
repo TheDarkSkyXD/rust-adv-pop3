@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": {
+    "rust-async-patterns": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "7da2b320a51fa7da0b78138132d814e4c9ee078617f7ead6e0e04ffb9e769cc8"
+    },
+    "rust-best-practices": {
+      "source": "apollographql/skills",
+      "sourceType": "github",
+      "computedHash": "3d80db37cef0198fe21f6f10363bbe0a7cb3f36afab49d0f3270fad4abc2a6d9"
+    }
+  }
+}

@@ -179,8 +179,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | MIME-02 | Phase 9 | Pending |
 
 **Coverage:**
-- v1 requirements (v2.0 milestone): 32 total, mapped to phases 1-4: 32
-- v2 requirements (v3.0 milestone): 17 total, mapped to phases 5-9: 17
+- v2.0 requirements: 32 total, mapped to phases 1-4: 32
+- v3.0 requirements: 17 total, mapped to phases 5-9: 17
 - Unmapped: 0 ✓
 
 ---
