@@ -54,6 +54,11 @@ pub(crate) fn parse_list_entry(line: &str) -> Result<ListEntry> {
     let size: u64 = size_str
         .parse()
         .map_err(|_| Pop3Error::Parse(format!("LIST: invalid message size: {size_str}")))?;
+    if parts.next().is_some() {
+        return Err(Pop3Error::Parse(format!(
+            "LIST: unexpected extra fields: {line}"
+        )));
+    }
     Ok(ListEntry { message_id, size })
 }
 
@@ -83,6 +88,11 @@ pub(crate) fn parse_uidl_entry(line: &str) -> Result<UidlEntry> {
     let message_id: u32 = id_str
         .parse()
         .map_err(|_| Pop3Error::Parse(format!("UIDL: invalid message id: {id_str}")))?;
+    if parts.next().is_some() {
+        return Err(Pop3Error::Parse(format!(
+            "UIDL: unexpected extra fields: {line}"
+        )));
+    }
     Ok(UidlEntry {
         message_id,
         unique_id: uid.to_string(),

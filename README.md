@@ -10,7 +10,8 @@ A modern, safe POP3 client library using [rustls](https://github.com/rustls/rust
 
 [Documentation](https://docs.rs/pop3/)
 
-## Usage
+Usage
+-----
 
 Add to your `Cargo.toml`:
 ```toml
@@ -48,6 +49,7 @@ fn main() -> pop3::Result<()> {
 }
 ```
 
-## License
+License
+-------
 
 MIT
