@@ -12,14 +12,14 @@ Requirements for v2.0 release. Each maps to roadmap phases.
 - [ ] **FOUND-01**: Library compiles with Rust 2021 edition
 - [ ] **FOUND-02**: All regex patterns use `std::sync::LazyLock` instead of `lazy_static`
 - [ ] **FOUND-03**: All public methods return `Result<T, Pop3Error>` instead of panicking
-- [ ] **FOUND-04**: `Pop3Error` typed enum covers I/O, TLS, protocol, authentication, and parse errors
+- [x] **FOUND-04**: `Pop3Error` typed enum covers I/O, TLS, protocol, authentication, and parse errors
 
 ### Bug Fixes
 
-- [ ] **FIX-01**: `rset()` sends `RSET\r\n` (not `RETR\r\n`)
-- [ ] **FIX-02**: `noop()` sends `NOOP\r\n` (uppercase)
-- [ ] **FIX-03**: `is_authenticated` is set only after server confirms PASS with `+OK`
-- [ ] **FIX-04**: `parse_list_one()` uses a dedicated LIST regex, not `STAT_REGEX`
+- [x] **FIX-01**: `rset()` sends `RSET\r\n` (not `RETR\r\n`)
+- [x] **FIX-02**: `noop()` sends `NOOP\r\n` (uppercase)
+- [x] **FIX-03**: `is_authenticated` is set only after server confirms PASS with `+OK`
+- [x] **FIX-04**: `parse_list_one()` uses a dedicated LIST regex, not `STAT_REGEX`
 
 ### Async I/O
 
@@ -54,7 +54,7 @@ Requirements for v2.0 release. Each maps to roadmap phases.
 
 ### Quality
 
-- [ ] **QUAL-01**: Unit tests cover all response parsing functions via mock I/O
+- [x] **QUAL-01**: Unit tests cover all response parsing functions via mock I/O
 - [ ] **QUAL-02**: Integration tests cover connect, auth, and command flows via mock POP3 server
 - [ ] **QUAL-03**: GitHub Actions CI runs tests, clippy, and format checks
 - [ ] **QUAL-04**: CI matrix tests both `rustls-tls` and `openssl-tls` feature flags
@@ -131,12 +131,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | FOUND-01 | Phase 1 | Pending |
 | FOUND-02 | Phase 1 | Pending |
 | FOUND-03 | Phase 1 | Pending |
-| FOUND-04 | Phase 1 | Pending |
-| FIX-01 | Phase 1 | Pending |
-| FIX-02 | Phase 1 | Pending |
-| FIX-03 | Phase 1 | Pending |
-| FIX-04 | Phase 1 | Pending |
-| QUAL-01 | Phase 1 | Pending |
+| FOUND-04 | Phase 1 | Complete (01-01) |
+| FIX-01 | Phase 1 | Complete (01-01) |
+| FIX-02 | Phase 1 | Complete (01-01) |
+| FIX-03 | Phase 1 | Complete (01-01) |
+| FIX-04 | Phase 1 | Complete (01-01) |
+| QUAL-01 | Phase 1 | Complete (01-01) |
 | ASYNC-01 | Phase 2 | Pending |
 | ASYNC-02 | Phase 2 | Pending |
 | ASYNC-03 | Phase 2 | Pending |
@@ -185,4 +185,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-03-01*
-*Last updated: 2026-03-01 after v3.0 roadmap creation — all 49 requirements mapped*
+*Last updated: 2026-03-01 after plan 01-01 completion — FOUND-04, FIX-01..04, QUAL-01 marked complete*

@@ -10,28 +10,28 @@ See: .planning/PROJECT.md (updated 2026-03-01)
 ## Current Position
 
 Phase: 1 of 9 (Foundation)
-Plan: 0 of ? in current phase
-Status: Ready to plan
-Last activity: 2026-03-01 — v3.0 roadmap (phases 5-9) defined; full 9-phase roadmap written to ROADMAP.md
+Plan: 1 of 2 in current phase
+Status: In progress
+Last activity: 2026-03-01 — Completed 01-01 (AuthFailed variant, mock transport, 14 bug-proof tests)
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█░░░░░░░░░] 6%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 0
-- Average duration: —
-- Total execution time: —
+- Total plans completed: 1
+- Average duration: 25 min
+- Total execution time: 25 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| 01-foundation | 1 | 25 min | 25 min |
 
 **Recent Trend:**
-- Last 5 plans: —
-- Trend: —
+- Last 5 plans: 25 min
+- Trend: establishing baseline
 
 *Updated after each plan completion*
 
@@ -42,6 +42,9 @@ Progress: [░░░░░░░░░░] 0%
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [01-01]: AuthFailed(String) variant added; login() converts ServerError->AuthFailed for semantic auth failure reporting
+- [01-01]: Stream::Mock uses Rc<RefCell<Vec<u8>>> not Arc<Mutex> — tests are single-threaded, no overhead needed
+- [01-01]: Stream::Mock confined entirely to #[cfg(test)] — no public API leakage, no type parameter on Pop3Client
 - [Roadmap]: Async with tokio — industry standard, largest ecosystem
 - [Roadmap]: Dual TLS via feature flags (openssl + rustls) — mutual exclusion enforced by compile_error!
 - [Roadmap]: Major version bump to v2.0 — API breaking changes justify semver major
@@ -72,5 +75,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: v3.0 roadmap defined (phases 5-9). Full 9-phase roadmap written. v2.0 (phases 1-4) and v3.0 (phases 5-9) both ready to plan. Start with Phase 1.
+Stopped at: Completed 01-01-PLAN.md — AuthFailed variant, mock transport infrastructure, 14 bug-proof tests proving FIX-01..FIX-04. Ready for Plan 02.
 Resume file: None
