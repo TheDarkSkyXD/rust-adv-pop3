@@ -1,3 +1,14 @@
+/// The current state of the POP3 session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionState {
+    /// Connected to the server but not yet authenticated.
+    Connected,
+    /// Successfully authenticated (TRANSACTION state in RFC 1939).
+    Authenticated,
+    /// Session has ended (after QUIT).
+    Disconnected,
+}
+
 /// Mailbox statistics returned by the `STAT` command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stat {
