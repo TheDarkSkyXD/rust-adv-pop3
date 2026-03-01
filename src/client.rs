@@ -466,8 +466,7 @@ mod tests {
 
     #[test]
     fn uidl_single_happy_path() {
-        let (mut client, writer) =
-            build_authenticated_test_client(b"+OK 1 abc123\r\n");
+        let (mut client, writer) = build_authenticated_test_client(b"+OK 1 abc123\r\n");
         let entries = client.uidl(Some(1)).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].message_id, 1);
@@ -570,7 +569,10 @@ mod tests {
 
         // Re-create because the mock buffer is consumed
         let (mut client, _) = build_test_client(b"");
-        assert!(matches!(client.list(None), Err(Pop3Error::NotAuthenticated)));
+        assert!(matches!(
+            client.list(None),
+            Err(Pop3Error::NotAuthenticated)
+        ));
 
         let (mut client, _) = build_test_client(b"");
         assert!(matches!(client.retr(1), Err(Pop3Error::NotAuthenticated)));
