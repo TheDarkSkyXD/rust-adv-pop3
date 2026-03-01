@@ -27,8 +27,9 @@ Provide a correct, async, production-quality POP3 client that handles errors gra
 
 ### Active
 
-<!-- Current scope: v2.0 milestone -->
+<!-- Current scope: v2.0 + v3.0 milestones -->
 
+**v2.0 — Full Async Rewrite:**
 - [ ] Async/await API using tokio
 - [ ] Idiomatic Rust API: builder pattern, typed error enum, proper Result types
 - [ ] Dual TLS backends: openssl + rustls via feature flags
@@ -40,15 +41,20 @@ Provide a correct, async, production-quality POP3 client that handles errors gra
 - [ ] GitHub Actions CI pipeline
 - [ ] Rustdoc documentation with examples
 
+**v3.0 — Advanced Features (GitHub issue #2):**
+- [ ] POP3 command pipelining (RFC 2449)
+- [ ] UIDL caching for incremental sync
+- [ ] Automatic reconnection with exponential backoff
+- [ ] Connection pooling
+- [ ] Optional mailparse/MIME integration
+
 ### Out of Scope
 
 <!-- Explicit boundaries -->
 
 - IMAP support — different protocol, different crate
-- Email parsing/MIME decoding — use `mailparse` or similar crate
-- Connection pooling — application-level concern
 - OAUTH2/XOAUTH2 authentication — can be added in future milestone
-- Sync API wrapper — async-only for v2.0; users can use `block_on` if needed
+- Sync API wrapper — async-only; users can use `block_on` if needed
 
 ## Context
 
@@ -80,6 +86,19 @@ Provide a correct, async, production-quality POP3 client that handles errors gra
 - Unit tests, mock server, GitHub Actions CI
 - Rustdoc with examples
 
+## Planned Milestone: v3.0 Advanced Features
+
+**Goal:** Add advanced protocol features — pipelining for throughput, UIDL caching for incremental sync, automatic reconnection for reliability, connection pooling, and optional MIME parsing — making the library production-ready for high-volume mail processing.
+
+**Source:** [GitHub issue #2](https://github.com/TheDarkSkyXD/rust-adv-pop3/issues/2)
+
+**Target features:**
+- POP3 command pipelining (send multiple commands without waiting for responses)
+- UIDL caching for incremental syncs (track unique message IDs, avoid re-downloading)
+- Automatic reconnection with exponential backoff
+- Connection pooling for concurrent access
+- Optional mailparse integration for MIME handling post-RETR
+
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
@@ -88,6 +107,9 @@ Provide a correct, async, production-quality POP3 client that handles errors gra
 | Dual TLS via feature flags | openssl for compatibility, rustls for pure-Rust builds | — Pending |
 | Major version bump to v2.0 | API breaking changes justify semver major | — Pending |
 | Drop sync API | Simplifies codebase; sync callers use `block_on` | — Pending |
+| Add pipelining in v3.0 | RFC 2449 support for throughput; builds on async foundation | — Pending |
+| Include connection pooling | Requested in issue #2; moves from out-of-scope to v3.0 | — Pending |
+| Optional mailparse integration | Behind feature flag; keeps core library lean | — Pending |
 
 ---
-*Last updated: 2026-03-01 after milestone v2.0 initialization*
+*Last updated: 2026-03-01 after milestone v3.0 definition*

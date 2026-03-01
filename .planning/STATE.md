@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-03-01)
 Phase: 1 of 4 (Foundation)
 Plan: 0 of ? in current phase
 Status: Ready to plan
-Last activity: 2026-03-01 — Roadmap created for v2.0 milestone
+Last activity: 2026-03-01 — v3.0 milestone defined (issue #2), v2.0 still active
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -47,6 +47,7 @@ Recent decisions affecting current work:
 - [Roadmap]: Major version bump to v2.0 — API breaking changes justify semver major
 - [Roadmap]: Drop sync API — async-only; sync callers use block_on
 - [Codebase]: Single-file library at src/pop3.rs (~537 lines), zero existing tests, four known bugs
+- [Milestone]: v3.0 Advanced Features defined from GitHub issue #2 — pipelining, UIDL caching, reconnection, pooling, mailparse
 
 ### Pending Todos
 
@@ -60,5 +61,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Roadmap written, STATE.md initialized, REQUIREMENTS.md traceability updated. Ready to plan Phase 1.
+Stopped at: v3.0 milestone defined. v2.0 roadmap (phases 1-4) ready to plan. v3.0 roadmap (phases 5+) defined.
 Resume file: None
