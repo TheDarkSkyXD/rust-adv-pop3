@@ -10,28 +10,28 @@ See: .planning/PROJECT.md (updated 2026-03-01)
 ## Current Position
 
 Phase: 1 of 9 (Foundation)
-Plan: 1 of 2 in current phase
-Status: In progress
-Last activity: 2026-03-01 — Completed 01-01 (AuthFailed variant, mock transport, 14 bug-proof tests)
+Plan: 2 of 2 in current phase (COMPLETE)
+Status: Phase 1 complete — ready for Phase 2
+Last activity: 2026-03-01 — Completed 01-02 (15 new mock I/O tests, full QUAL-01 coverage for all POP3 commands)
 
-Progress: [█░░░░░░░░░] 6%
+Progress: [██░░░░░░░░] 11%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 1
-- Average duration: 25 min
-- Total execution time: 25 min
+- Total plans completed: 2
+- Average duration: 20 min
+- Total execution time: 40 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 01-foundation | 1 | 25 min | 25 min |
+| 01-foundation | 2 | 40 min | 20 min |
 
 **Recent Trend:**
-- Last 5 plans: 25 min
-- Trend: establishing baseline
+- Last 5 plans: 25 min, 15 min
+- Trend: accelerating
 
 *Updated after each plan completion*
 
@@ -45,6 +45,8 @@ Recent decisions affecting current work:
 - [01-01]: AuthFailed(String) variant added; login() converts ServerError->AuthFailed for semantic auth failure reporting
 - [01-01]: Stream::Mock uses Rc<RefCell<Vec<u8>>> not Arc<Mutex> — tests are single-threaded, no overhead needed
 - [01-01]: Stream::Mock confined entirely to #[cfg(test)] — no public API leakage, no type parameter on Pop3Client
+- [01-02]: UidlEntry field is unique_id not uid — corrected from plan template, confirmed by compiler
+- [01-02]: capa() and quit() use build_test_client (not authenticated) as production code does not call require_auth() for these
 - [Roadmap]: Async with tokio — industry standard, largest ecosystem
 - [Roadmap]: Dual TLS via feature flags (openssl + rustls) — mutual exclusion enforced by compile_error!
 - [Roadmap]: Major version bump to v2.0 — API breaking changes justify semver major
@@ -70,10 +72,10 @@ None yet.
 - [Phase 5]: Windowed pipeline implementation — PITFALLS.md specifies 4-8 command window but exact interleave mechanism (select! vs. send/drain interleave) should be prototyped before final design. Resolve in Phase 5 planning.
 - [Phase 8]: bb8 per-account exclusivity enforcement — decide whether each Pop3Pool targets one account (single builder per pool) or supports multi-account with runtime enforcement. Public API decision; resolve before Phase 8 begins.
 - [Phase 8]: bb8::ManageConnection async fn in traits — verify whether bb8 0.9 supports native async fn in impls (Rust 1.75+) or requires #[async_trait] macro. Check before Phase 8 planning.
-- [Phase 9]: Dot-unstuffing precondition — if retr() dot-unstuffing is not covered by a v2.0 test, add a regression test with a dot-stuffed message body as Phase 9 entry gate before any MIME code is written.
+- [Phase 9]: Dot-unstuffing precondition — RESOLVED in 01-02: retr_dot_unstuffing test confirms end-to-end dot-unstuffing works. Phase 9 entry gate satisfied.
 
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed 01-01-PLAN.md — AuthFailed variant, mock transport infrastructure, 14 bug-proof tests proving FIX-01..FIX-04. Ready for Plan 02.
+Stopped at: Completed 01-02-PLAN.md — 15 new mock I/O tests (retr, dele, uidl, quit, capa, top), full QUAL-01 coverage, Phase 1 complete. Ready for Phase 2 async rewrite.
 Resume file: None

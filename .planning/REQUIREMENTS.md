@@ -9,9 +9,9 @@ Requirements for v2.0 release. Each maps to roadmap phases.
 
 ### Foundation
 
-- [ ] **FOUND-01**: Library compiles with Rust 2021 edition
-- [ ] **FOUND-02**: All regex patterns use `std::sync::LazyLock` instead of `lazy_static`
-- [ ] **FOUND-03**: All public methods return `Result<T, Pop3Error>` instead of panicking
+- [x] **FOUND-01**: Library compiles with Rust 2021 edition
+- [x] **FOUND-02**: All regex patterns use `std::sync::LazyLock` instead of `lazy_static`
+- [x] **FOUND-03**: All public methods return `Result<T, Pop3Error>` instead of panicking
 - [x] **FOUND-04**: `Pop3Error` typed enum covers I/O, TLS, protocol, authentication, and parse errors
 
 ### Bug Fixes
@@ -128,15 +128,15 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FOUND-01 | Phase 1 | Pending |
-| FOUND-02 | Phase 1 | Pending |
-| FOUND-03 | Phase 1 | Pending |
+| FOUND-01 | Phase 1 | Complete (01-02) |
+| FOUND-02 | Phase 1 | Complete (01-02) |
+| FOUND-03 | Phase 1 | Complete (01-02) |
 | FOUND-04 | Phase 1 | Complete (01-01) |
 | FIX-01 | Phase 1 | Complete (01-01) |
 | FIX-02 | Phase 1 | Complete (01-01) |
 | FIX-03 | Phase 1 | Complete (01-01) |
 | FIX-04 | Phase 1 | Complete (01-01) |
-| QUAL-01 | Phase 1 | Complete (01-01) |
+| QUAL-01 | Phase 1 | Complete (01-02) |
 | ASYNC-01 | Phase 2 | Pending |
 | ASYNC-02 | Phase 2 | Pending |
 | ASYNC-03 | Phase 2 | Pending |
@@ -185,4 +185,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-03-01*
-*Last updated: 2026-03-01 after plan 01-01 completion — FOUND-04, FIX-01..04, QUAL-01 marked complete*
+*Last updated: 2026-03-01 after plan 01-02 completion — FOUND-01..04, FIX-01..04, QUAL-01 all complete; Phase 1 done*

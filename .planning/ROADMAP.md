@@ -17,7 +17,7 @@ This roadmap covers two milestones:
 Decimal phases appear between their surrounding integers in numeric order.
 
 **v2.0 Phases:**
-- [ ] **Phase 1: Foundation** - Fix known bugs, establish error handling, and build test infrastructure
+- [x] **Phase 1: Foundation** - Fix known bugs, establish error handling, and build test infrastructure
 - [ ] **Phase 2: Async Core** - Migrate all I/O to async/await, port all v1 commands, set up CI
 - [ ] **Phase 3: TLS and Publish** - Add dual TLS backends, remaining commands, docs, and ship v2.0.0
 - [ ] **Phase 4: Protocol Extensions** - Add APOP, RESP-CODES, and builder pattern API
@@ -43,7 +43,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   5. All response parsing functions have at least one passing unit test exercising the happy path and one exercising an error path
 **Plans:** 2 plans
 - [x] 01-01-PLAN.md -- Mock transport infrastructure, AuthFailed error variant, and bug-proof tests (FIX-01..04)
-- [ ] 01-02-PLAN.md -- Complete mock I/O test coverage for all POP3 commands (QUAL-01)
+- [x] 01-02-PLAN.md -- Complete mock I/O test coverage for all POP3 commands (QUAL-01)
 
 ### Phase 2: Async Core
 **Goal**: All public API methods are async and work over a plain TCP connection — developers can connect, authenticate, and run every v1.0.6 command against a real server with no blocking calls
@@ -140,7 +140,7 @@ v3.0 phases execute in order: 5 → 6 → 7 → 8 → 9 (Phase 6 can run in para
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation | 1/2 | In progress | - |
+| 1. Foundation | 2/2 | Complete | 2026-03-01 |
 | 2. Async Core | 0/? | Not started | - |
 | 3. TLS and Publish | 0/? | Not started | - |
 | 4. Protocol Extensions | 0/? | Not started | - |
