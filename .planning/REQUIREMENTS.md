@@ -62,18 +62,51 @@ Requirements for v2.0 release. Each maps to roadmap phases.
 
 ## v2 Requirements
 
+Requirements for v3.0 release. Each maps to roadmap phases 5+.
+
+### Pipelining
+
+- [ ] **PIPE-01**: Client can send multiple POP3 commands without waiting for each response when server advertises PIPELINING (RFC 2449)
+- [ ] **PIPE-02**: Client automatically detects pipelining support via CAPA after authentication
+- [ ] **PIPE-03**: Client falls back to sequential mode when server does not advertise PIPELINING
+- [ ] **PIPE-04**: Pipelined commands use a windowed send strategy to prevent TCP send-buffer deadlock
+- [ ] **PIPE-05**: Client provides batch methods (`retr_many`, `dele_many`) that pipeline automatically
+
+### UIDL Caching
+
+- [ ] **CACHE-01**: Client provides an API to filter the UIDL list against a set of previously-seen UIDs
+- [ ] **CACHE-02**: Client provides a `fetch_new()` convenience method returning only unseen messages
+- [ ] **CACHE-03**: UIDL cache reconciliation prunes ghost entries (UIDs no longer on server) on each connect
+
+### Reconnection
+
+- [ ] **RECON-01**: Client provides automatic reconnection with exponential backoff on connection drop
+- [ ] **RECON-02**: Reconnection retries only on I/O errors — authentication failures propagate immediately
+- [ ] **RECON-03**: Reconnection explicitly surfaces session-state loss (DELE marks are not preserved) to caller
+- [ ] **RECON-04**: Backoff uses jitter to prevent thundering herd
+
+### Connection Pooling
+
+- [ ] **POOL-01**: Client provides a connection pool for multi-account scenarios via `bb8`
+- [ ] **POOL-02**: Pool enforces max 1 connection per mailbox (RFC 1939 exclusive lock)
+- [ ] **POOL-03**: Pool documentation prominently warns that POP3 forbids concurrent access to the same mailbox
+
+### MIME Integration
+
+- [ ] **MIME-01**: Client provides `retr_parsed()` method behind a `mime` feature flag
+- [ ] **MIME-02**: MIME integration uses `mail-parser` crate (zero external deps, RFC 5322 + MIME conformant)
+
+## v3 Requirements
+
 Deferred to future release. Tracked but not in current roadmap.
 
 ### Extended Protocol
 
 - **EXT-01**: SASL PLAIN authentication mechanism
-- **EXT-02**: POP3 command pipelining (RFC 2449)
 - **EXT-03**: OAUTH2/XOAUTH2 authentication
 
 ### Extended Features
 
-- **FEAT-01**: Automatic reconnection on connection drop
-- **FEAT-02**: Connection pooling
 - **FEAT-03**: Optional synchronous API wrapper
 
 ## Out of Scope
@@ -83,10 +116,11 @@ Explicitly excluded. Documented to prevent scope creep.
 | Feature | Reason |
 |---------|--------|
 | IMAP support | Different protocol, different crate |
-| Email/MIME parsing | Use `mailparse` or similar crate; out of scope for transport library |
-| Connection pooling | POP3 is inherently single-connection (servers return `[IN-USE]`) |
 | Synchronous API | Defeats the purpose of the async rewrite; callers use `block_on` |
-| SASL negotiation | Adds RFC compliance surface but minimal practical demand for v2.0 |
+| SASL negotiation | Adds RFC compliance surface but minimal practical demand |
+| Same-mailbox concurrent connections | RFC 1939 mandates exclusive mailbox lock; protocol-impossible |
+| Built-in UIDL persistence to disk | Transport library provides the data; caller owns persistence strategy |
+| Transparent auto-reconnect with silent DELE re-issue | Creates invisible data inconsistency; caller must own reconnect decisions |
 
 ## Traceability
 
