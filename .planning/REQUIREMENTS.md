@@ -145,7 +145,6 @@ Which phases cover which requirements. Updated during roadmap creation.
 | API-03 | Phase 2 | Pending |
 | API-04 | Phase 2 | Pending |
 | QUAL-03 | Phase 2 | Pending |
-| QUAL-04 | Phase 2 | Pending |
 | TLS-01 | Phase 3 | Pending |
 | TLS-02 | Phase 3 | Pending |
 | TLS-03 | Phase 3 | Pending |
@@ -155,6 +154,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CMD-01 | Phase 3 | Pending |
 | CMD-02 | Phase 3 | Pending |
 | QUAL-02 | Phase 3 | Pending |
+| QUAL-04 | Phase 3 | Pending |
 | QUAL-05 | Phase 3 | Pending |
 | CMD-03 | Phase 4 | Pending |
 | CMD-04 | Phase 4 | Pending |
@@ -181,8 +181,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 **Coverage:**
 - v2.0 requirements: 32 total, mapped to phases 1-4: 32
 - v3.0 requirements: 17 total, mapped to phases 5-9: 17
-- Unmapped: 0 ✓
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-01*
-*Last updated: 2026-03-01 after plan 01-02 completion — FOUND-01..04, FIX-01..04, QUAL-01 all complete; Phase 1 done*
+*Last updated: 2026-03-01 after Phase 2 plan revision — QUAL-04 moved from Phase 2 to Phase 3 (TLS feature flag matrix requires TLS code)*

@@ -48,7 +48,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 ### Phase 2: Async Core
 **Goal**: All public API methods are async and work over a plain TCP connection — developers can connect, authenticate, and run every v1.0.6 command against a real server with no blocking calls
 **Depends on**: Phase 1
-**Requirements**: ASYNC-01, ASYNC-02, ASYNC-03, ASYNC-04, ASYNC-05, API-03, API-04, QUAL-03, QUAL-04
+**Requirements**: ASYNC-01, ASYNC-02, ASYNC-03, ASYNC-04, ASYNC-05, API-03, API-04, QUAL-03
 **Success Criteria** (what must be TRUE):
   1. A caller can `await` any library method inside a `#[tokio::main]` function with no `block_on` wrappers
   2. All v1.0.6 commands (STAT, LIST, UIDL, RETR, DELE, NOOP, RSET, QUIT) work correctly over a plain TCP connection confirmed by integration tests against a mock server
@@ -58,12 +58,12 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans:** 3 plans
 - [ ] 02-01-PLAN.md — Tokio dependencies, Pop3Error::Timeout, and async transport rewrite (ASYNC-02, ASYNC-03, ASYNC-05)
 - [ ] 02-02-PLAN.md — Async Pop3Client with SessionState, quit(self), and test migration (ASYNC-01, ASYNC-04, API-03, API-04)
-- [ ] 02-03-PLAN.md — GitHub Actions CI workflow (QUAL-03, QUAL-04)
+- [ ] 02-03-PLAN.md — GitHub Actions CI workflow (QUAL-03)
 
 ### Phase 3: TLS and Publish
 **Goal**: Library users can connect to port 995 TLS servers using either rustls or openssl, CAPA and TOP work, docs are complete, and v2.0.0 is published to crates.io
 **Depends on**: Phase 2
-**Requirements**: TLS-01, TLS-02, TLS-03, TLS-04, TLS-05, TLS-06, CMD-01, CMD-02, QUAL-02, QUAL-05
+**Requirements**: TLS-01, TLS-02, TLS-03, TLS-04, TLS-05, TLS-06, CMD-01, CMD-02, QUAL-02, QUAL-04, QUAL-05
 **Success Criteria** (what must be TRUE):
   1. A user can connect to a port 995 POP3 server by selecting either `--features rustls-tls` or `--features openssl-tls` — only one backend is needed, and both produce identical public API behaviour
   2. Activating both TLS feature flags simultaneously produces a `compile_error!` at build time (not a runtime error)
