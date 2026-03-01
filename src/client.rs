@@ -5,7 +5,24 @@ use crate::response;
 use crate::transport::Transport;
 use crate::types::{Capability, ListEntry, Message, SessionState, Stat, UidlEntry};
 
-/// A POP3 client connection.
+/// An async POP3 client connection.
+///
+/// Create a `Pop3Client` using one of the `connect*` constructors. After
+/// creation, authenticate with [`login`](Self::login) before issuing
+/// mailbox commands.
+///
+/// # Session Lifecycle
+///
+/// ```text
+/// connect() / connect_tls()
+///     -> SessionState::Connected
+///         -> login() -> SessionState::Authenticated
+///             -> stat() / list() / retr() / dele() / ...
+///             -> quit() [consumes self] -> connection closed
+/// ```
+///
+/// Dropping a `Pop3Client` without calling [`quit`](Self::quit) closes the
+/// TCP connection silently. Any pending `DELE` marks are **not** committed.
 pub struct Pop3Client {
     transport: Transport,
     greeting: String,
@@ -34,7 +51,23 @@ impl Pop3Client {
     /// Connect to a POP3 server over plain TCP.
     ///
     /// The `timeout` duration is applied to every read operation for the lifetime
-    /// of this connection. Use `DEFAULT_TIMEOUT` for a sensible default (30s).
+    /// of this connection. Pass `Duration::from_secs(30)` for a sensible default.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect(
+    ///         ("pop.example.com", 110),
+    ///         std::time::Duration::from_secs(30),
+    ///     ).await?;
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn connect(addr: impl tokio::net::ToSocketAddrs, timeout: Duration) -> Result<Self> {
         let mut transport = Transport::connect_plain(addr, timeout).await?;
         let greeting_line = transport.read_line().await?;
@@ -46,15 +79,57 @@ impl Pop3Client {
         })
     }
 
-    /// Connect with the default timeout (30 seconds).
+    /// Connect to a POP3 server over plain TCP with the default timeout (30 seconds).
+    ///
+    /// This is a convenience wrapper around [`connect`](Self::connect) that applies
+    /// a 30-second read timeout.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn connect_default(addr: impl tokio::net::ToSocketAddrs) -> Result<Self> {
         Self::connect(addr, crate::transport::DEFAULT_TIMEOUT).await
     }
 
     /// Connect to a POP3 server over TLS (typically port 995).
     ///
-    /// The `hostname` is used for TLS server name verification (SNI).
-    /// The `timeout` duration is applied to every read operation.
+    /// The `hostname` is used for TLS server name verification (SNI) and must
+    /// match the server certificate. The `timeout` duration is applied to every
+    /// read operation.
+    ///
+    /// Requires the `rustls-tls` (default) or `openssl-tls` feature flag.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_tls(
+    ///         ("pop.gmail.com", 995),
+    ///         "pop.gmail.com",
+    ///         std::time::Duration::from_secs(30),
+    ///     ).await?;
+    ///     client.login("user@gmail.com", "app-password").await?;
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Pop3Error::InvalidDnsName`] if `hostname` is not a valid DNS name,
+    /// or [`Pop3Error::Tls`] if the TLS handshake fails.
     #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
     pub async fn connect_tls(
         addr: impl tokio::net::ToSocketAddrs,
@@ -71,7 +146,25 @@ impl Pop3Client {
         })
     }
 
-    /// Connect over TLS with the default timeout (30 seconds).
+    /// Connect to a POP3 server over TLS with the default timeout (30 seconds).
+    ///
+    /// Convenience wrapper around [`connect_tls`](Self::connect_tls) with a 30-second timeout.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_tls_default(
+    ///         ("pop.gmail.com", 995),
+    ///         "pop.gmail.com",
+    ///     ).await?;
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
     pub async fn connect_tls_default(
         addr: impl tokio::net::ToSocketAddrs,
@@ -80,17 +173,71 @@ impl Pop3Client {
         Self::connect_tls(addr, hostname, crate::transport::DEFAULT_TIMEOUT).await
     }
 
-    /// Returns the server greeting message.
+    /// Returns the server greeting message received on connection.
+    ///
+    /// This is the text following `+OK` on the initial line sent by the server.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     println!("Server greeting: {}", client.greeting());
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn greeting(&self) -> &str {
         &self.greeting
     }
 
     /// Returns the current session state.
+    ///
+    /// Use this to check whether the client is connected, authenticated, or
+    /// disconnected without attempting a command.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::{Pop3Client, SessionState};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     assert_eq!(client.state(), SessionState::Connected);
+    ///     client.login("user", "pass").await?;
+    ///     assert_eq!(client.state(), SessionState::Authenticated);
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn state(&self) -> SessionState {
         self.state.clone()
     }
 
-    /// Returns `true` if the connection is encrypted via TLS.
+    /// Returns `true` if the connection is currently encrypted via TLS.
+    ///
+    /// Returns `false` for plain TCP connections and after a failed STARTTLS attempt.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let client = Pop3Client::connect_tls_default(
+    ///         ("pop.gmail.com", 995),
+    ///         "pop.gmail.com",
+    ///     ).await?;
+    ///     assert!(client.is_encrypted());
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn is_encrypted(&self) -> bool {
         self.transport.is_encrypted()
     }
@@ -139,7 +286,30 @@ impl Pop3Client {
         Ok(())
     }
 
-    /// Authenticate with the server using USER/PASS.
+    /// Authenticate with the server using the USER/PASS command sequence.
+    ///
+    /// On success, the session transitions to [`SessionState::Authenticated`].
+    /// Server rejection of credentials returns [`Pop3Error::AuthFailed`].
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("alice", "secret").await?;
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - [`Pop3Error::AuthFailed`] — server rejected the credentials
+    /// - [`Pop3Error::NotAuthenticated`] — called when already authenticated
+    /// - [`Pop3Error::InvalidInput`] — username or password contains CR or LF
     pub async fn login(&mut self, username: &str, password: &str) -> Result<()> {
         if self.state != SessionState::Connected {
             return Err(Pop3Error::NotAuthenticated);
@@ -168,7 +338,25 @@ impl Pop3Client {
         Ok(())
     }
 
-    /// Get mailbox statistics (message count and total size).
+    /// Get mailbox statistics: total message count and total size in bytes.
+    ///
+    /// Sends the `STAT` command and returns a [`Stat`] with the results.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///     let stat = client.stat().await?;
+    ///     println!("{} messages, {} bytes total", stat.message_count, stat.mailbox_size);
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn stat(&mut self) -> Result<Stat> {
         self.require_auth()?;
         let text = self.send_and_check("STAT").await?;

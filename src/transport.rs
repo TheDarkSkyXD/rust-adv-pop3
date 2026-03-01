@@ -318,6 +318,7 @@ impl Transport {
     }
 
     #[cfg(feature = "openssl-tls")]
+    #[allow(dead_code)] // Used by upgrade_in_place (Plan 02)
     async fn tls_handshake(tcp_stream: TcpStream, hostname: &str) -> Result<InnerStream> {
         use openssl::ssl::{SslConnector, SslMethod};
         use tokio_openssl::SslStream;
