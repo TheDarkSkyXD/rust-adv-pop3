@@ -219,6 +219,7 @@ impl Transport {
 
     /// Stub for when no TLS feature is active.
     #[cfg(not(any(feature = "rustls-tls", feature = "openssl-tls")))]
+    #[allow(dead_code)]
     pub(crate) async fn connect_tls(
         _addr: impl tokio::net::ToSocketAddrs,
         _hostname: &str,
