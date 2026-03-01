@@ -55,10 +55,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Multi-line responses (RETR, LIST all, UIDL all) are correctly dot-unstuffed per RFC 1939
   4. Calling `quit()` consumes the client value — the compiler rejects any further method calls on the same variable after disconnect
   5. GitHub Actions CI passes `cargo test`, `cargo clippy -D warnings`, and `cargo fmt --check` on every push
-**Plans:** 3/3 plans complete
+**Plans:** 4/4 plans complete
 - [x] 02-01-PLAN.md — Tokio dependencies, Pop3Error::Timeout, and async transport rewrite (ASYNC-02, ASYNC-03, ASYNC-05)
 - [x] 02-02-PLAN.md — Async Pop3Client with SessionState, quit(self), and test migration (ASYNC-01, ASYNC-04, API-03, API-04)
 - [x] 02-03-PLAN.md — GitHub Actions CI workflow (QUAL-03)
+- [x] 02-04-PLAN.md — Phase 2 verification gap closure: examples/basic.rs fix validated, integration test criterion decision documented (QUAL-03)
 
 ### Phase 3: TLS and Publish
 **Goal**: Library users can connect to port 995 TLS servers using either rustls or openssl, CAPA and TOP work, docs are complete, and v2.0.0 is published to crates.io
@@ -144,7 +145,7 @@ v3.0 phases execute in order: 5 → 6 → 7 → 8 → 9 (Phase 6 can run in para
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation | 2/2 | Complete | 2026-03-01 |
-| 2. Async Core | 3/3 | Complete   | 2026-03-01 |
+| 2. Async Core | 4/4 | Complete (verified) | 2026-03-01 |
 | 3. TLS and Publish | 0/? | Not started | - |
 | 4. Protocol Extensions | 0/? | Not started | - |
 | 5. Pipelining | 0/? | Not started | - |
