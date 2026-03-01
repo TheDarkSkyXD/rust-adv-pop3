@@ -69,11 +69,19 @@ impl Pop3Client {
         check_no_crlf(username)?;
         check_no_crlf(password)?;
 
-        // USER command
-        self.send_and_check(&format!("USER {username}"))?;
+        // USER command — auth failure if rejected
+        self.send_and_check(&format!("USER {username}"))
+            .map_err(|e| match e {
+                Pop3Error::ServerError(msg) => Pop3Error::AuthFailed(msg),
+                other => other,
+            })?;
 
-        // PASS command
-        self.send_and_check(&format!("PASS {password}"))?;
+        // PASS command — auth failure if rejected
+        self.send_and_check(&format!("PASS {password}"))
+            .map_err(|e| match e {
+                Pop3Error::ServerError(msg) => Pop3Error::AuthFailed(msg),
+                other => other,
+            })?;
 
         // Only set authenticated after both commands succeed
         self.authenticated = true;
@@ -194,6 +202,26 @@ impl Pop3Client {
             Ok(())
         }
     }
+}
+
+#[cfg(test)]
+fn build_test_client(server_bytes: &[u8]) -> (Pop3Client, std::rc::Rc<std::cell::RefCell<Vec<u8>>>) {
+    let (transport, writer) = Transport::mock(server_bytes);
+    let client = Pop3Client {
+        transport,
+        greeting: String::new(),
+        authenticated: false,
+    };
+    (client, writer)
+}
+
+#[cfg(test)]
+fn build_authenticated_test_client(
+    server_bytes: &[u8],
+) -> (Pop3Client, std::rc::Rc<std::cell::RefCell<Vec<u8>>>) {
+    let (mut client, writer) = build_test_client(server_bytes);
+    client.authenticated = true;
+    (client, writer)
 }
 
 #[cfg(test)]

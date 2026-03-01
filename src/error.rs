@@ -19,6 +19,10 @@ pub enum Pop3Error {
     #[error("server error: {0}")]
     ServerError(String),
 
+    /// The server rejected authentication credentials.
+    #[error("authentication failed: {0}")]
+    AuthFailed(String),
+
     /// A response from the server could not be parsed.
     #[error("parse error: {0}")]
     Parse(String),

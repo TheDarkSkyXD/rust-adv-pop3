@@ -3,6 +3,13 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(test)]
+use std::cell::RefCell;
+#[cfg(test)]
+use std::io::Cursor;
+#[cfg(test)]
+use std::rc::Rc;
+
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, StreamOwned};
 
@@ -14,6 +21,11 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 enum Stream {
     Plain(BufReader<TcpStream>),
     Tls(Box<BufReader<StreamOwned<ClientConnection, TcpStream>>>),
+    #[cfg(test)]
+    Mock {
+        reader: BufReader<Cursor<Vec<u8>>>,
+        writer: Rc<RefCell<Vec<u8>>>,
+    },
 }
 
 pub(crate) struct Transport {
@@ -93,6 +105,13 @@ impl Transport {
                 stream.write_all(b"\r\n")?;
                 stream.flush()?;
             }
+            #[cfg(test)]
+            Stream::Mock { ref writer, .. } => {
+                let mut w = writer.borrow_mut();
+                w.extend_from_slice(cmd.as_bytes());
+                w.extend_from_slice(b"\r\n");
+                // No flush needed for in-memory buffer
+            }
         }
         Ok(())
     }
@@ -105,6 +124,10 @@ impl Transport {
                 reader.read_line(&mut line)?;
             }
             Stream::Tls(ref mut reader) => {
+                reader.read_line(&mut line)?;
+            }
+            #[cfg(test)]
+            Stream::Mock { ref mut reader, .. } => {
                 reader.read_line(&mut line)?;
             }
         }
@@ -137,6 +160,22 @@ impl Transport {
             body.push('\n');
         }
         Ok(body)
+    }
+}
+
+#[cfg(test)]
+impl Transport {
+    /// Create a mock transport for testing. Returns the transport and a handle to
+    /// the write buffer so tests can inspect what bytes were sent to the server.
+    pub(crate) fn mock(server_bytes: &[u8]) -> (Self, Rc<RefCell<Vec<u8>>>) {
+        let writer = Rc::new(RefCell::new(Vec::new()));
+        let transport = Transport {
+            stream: Stream::Mock {
+                reader: BufReader::new(Cursor::new(server_bytes.to_vec())),
+                writer: Rc::clone(&writer),
+            },
+        };
+        (transport, writer)
     }
 }
 
