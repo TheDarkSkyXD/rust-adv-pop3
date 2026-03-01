@@ -5,7 +5,24 @@ use crate::response;
 use crate::transport::Transport;
 use crate::types::{Capability, ListEntry, Message, SessionState, Stat, UidlEntry};
 
-/// A POP3 client connection.
+/// An async POP3 client connection.
+///
+/// Create a `Pop3Client` using one of the `connect*` constructors. After
+/// creation, authenticate with [`login`](Self::login) before issuing
+/// mailbox commands.
+///
+/// # Session Lifecycle
+///
+/// ```text
+/// connect() / connect_tls()
+///     -> SessionState::Connected
+///         -> login() -> SessionState::Authenticated
+///             -> stat() / list() / retr() / dele() / ...
+///             -> quit() [consumes self] -> connection closed
+/// ```
+///
+/// Dropping a `Pop3Client` without calling [`quit`](Self::quit) closes the
+/// TCP connection silently. Any pending `DELE` marks are **not** committed.
 pub struct Pop3Client {
     transport: Transport,
     greeting: String,
@@ -34,7 +51,23 @@ impl Pop3Client {
     /// Connect to a POP3 server over plain TCP.
     ///
     /// The `timeout` duration is applied to every read operation for the lifetime
-    /// of this connection. Use `DEFAULT_TIMEOUT` for a sensible default (30s).
+    /// of this connection. Pass `Duration::from_secs(30)` for a sensible default.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect(
+    ///         ("pop.example.com", 110),
+    ///         std::time::Duration::from_secs(30),
+    ///     ).await?;
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn connect(addr: impl tokio::net::ToSocketAddrs, timeout: Duration) -> Result<Self> {
         let mut transport = Transport::connect_plain(addr, timeout).await?;
         let greeting_line = transport.read_line().await?;
@@ -46,22 +79,238 @@ impl Pop3Client {
         })
     }
 
-    /// Connect with the default timeout (30 seconds).
+    /// Connect to a POP3 server over plain TCP with the default timeout (30 seconds).
+    ///
+    /// This is a convenience wrapper around [`connect`](Self::connect) that applies
+    /// a 30-second read timeout.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn connect_default(addr: impl tokio::net::ToSocketAddrs) -> Result<Self> {
         Self::connect(addr, crate::transport::DEFAULT_TIMEOUT).await
     }
 
-    /// Returns the server greeting message.
+    /// Connect to a POP3 server over TLS (typically port 995).
+    ///
+    /// The `hostname` is used for TLS server name verification (SNI) and must
+    /// match the server certificate. The `timeout` duration is applied to every
+    /// read operation.
+    ///
+    /// Requires the `rustls-tls` (default) or `openssl-tls` feature flag.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_tls(
+    ///         ("pop.gmail.com", 995),
+    ///         "pop.gmail.com",
+    ///         std::time::Duration::from_secs(30),
+    ///     ).await?;
+    ///     client.login("user@gmail.com", "app-password").await?;
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Pop3Error::InvalidDnsName`] if `hostname` is not a valid DNS name,
+    /// or [`Pop3Error::Tls`] if the TLS handshake fails.
+    #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+    pub async fn connect_tls(
+        addr: impl tokio::net::ToSocketAddrs,
+        hostname: &str,
+        timeout: Duration,
+    ) -> Result<Self> {
+        let mut transport = Transport::connect_tls(addr, hostname, timeout).await?;
+        let greeting_line = transport.read_line().await?;
+        let greeting_text = response::parse_status_line(&greeting_line)?;
+        Ok(Pop3Client {
+            transport,
+            greeting: greeting_text.to_string(),
+            state: SessionState::Connected,
+        })
+    }
+
+    /// Connect to a POP3 server over TLS with the default timeout (30 seconds).
+    ///
+    /// Convenience wrapper around [`connect_tls`](Self::connect_tls) with a 30-second timeout.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_tls_default(
+    ///         ("pop.gmail.com", 995),
+    ///         "pop.gmail.com",
+    ///     ).await?;
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+    pub async fn connect_tls_default(
+        addr: impl tokio::net::ToSocketAddrs,
+        hostname: &str,
+    ) -> Result<Self> {
+        Self::connect_tls(addr, hostname, crate::transport::DEFAULT_TIMEOUT).await
+    }
+
+    /// Returns the server greeting message received on connection.
+    ///
+    /// This is the text following `+OK` on the initial line sent by the server.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     println!("Server greeting: {}", client.greeting());
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn greeting(&self) -> &str {
         &self.greeting
     }
 
     /// Returns the current session state.
+    ///
+    /// Use this to check whether the client is connected, authenticated, or
+    /// disconnected without attempting a command.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::{Pop3Client, SessionState};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     assert_eq!(client.state(), SessionState::Connected);
+    ///     client.login("user", "pass").await?;
+    ///     assert_eq!(client.state(), SessionState::Authenticated);
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn state(&self) -> SessionState {
         self.state.clone()
     }
 
-    /// Authenticate with the server using USER/PASS.
+    /// Returns `true` if the connection is currently encrypted via TLS.
+    ///
+    /// Returns `false` for plain TCP connections and after a failed STARTTLS attempt.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Requires rustls-tls (default) or openssl-tls feature.
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let client = Pop3Client::connect_tls_default(
+    ///         ("pop.gmail.com", 995),
+    ///         "pop.gmail.com",
+    ///     ).await?;
+    ///     assert!(client.is_encrypted());
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn is_encrypted(&self) -> bool {
+        self.transport.is_encrypted()
+    }
+
+    /// Upgrade the connection to TLS via the STLS command (POP3 STARTTLS).
+    ///
+    /// Must be called before authentication — STLS is only valid in the
+    /// AUTHORIZATION state per RFC 2595. After a successful upgrade,
+    /// [`is_encrypted()`](Self::is_encrypted) returns `true`.
+    ///
+    /// The `hostname` parameter is used for TLS server name verification (SNI).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect(
+    ///         ("pop.example.com", 110),
+    ///         std::time::Duration::from_secs(30),
+    ///     ).await?;
+    ///     client.stls("pop.example.com").await?;
+    ///     client.login("user", "pass").await?;
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+    pub async fn stls(&mut self, hostname: &str) -> Result<()> {
+        if self.state == SessionState::Authenticated {
+            return Err(Pop3Error::ServerError(
+                "STLS not allowed after authentication (RFC 2595)".to_string(),
+            ));
+        }
+        if self.is_encrypted() {
+            return Err(Pop3Error::ServerError(
+                "connection is already encrypted".to_string(),
+            ));
+        }
+
+        self.send_and_check("STLS").await?;
+        self.transport.upgrade_in_place(hostname).await?;
+
+        Ok(())
+    }
+
+    /// Authenticate with the server using the USER/PASS command sequence.
+    ///
+    /// On success, the session transitions to [`SessionState::Authenticated`].
+    /// Server rejection of credentials returns [`Pop3Error::AuthFailed`].
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("alice", "secret").await?;
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - [`Pop3Error::AuthFailed`] — server rejected the credentials
+    /// - [`Pop3Error::NotAuthenticated`] — called when already authenticated
+    /// - [`Pop3Error::InvalidInput`] — username or password contains CR or LF
     pub async fn login(&mut self, username: &str, password: &str) -> Result<()> {
         if self.state != SessionState::Connected {
             return Err(Pop3Error::NotAuthenticated);
@@ -90,15 +339,62 @@ impl Pop3Client {
         Ok(())
     }
 
-    /// Get mailbox statistics (message count and total size).
+    /// Get mailbox statistics: total message count and total size in bytes.
+    ///
+    /// Sends the `STAT` command and returns a [`Stat`] with the results.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///     let stat = client.stat().await?;
+    ///     println!("{} messages, {} bytes total", stat.message_count, stat.mailbox_size);
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn stat(&mut self) -> Result<Stat> {
         self.require_auth()?;
         let text = self.send_and_check("STAT").await?;
         response::parse_stat(&text)
     }
 
-    /// List messages. If `message_id` is `Some`, returns info for that message only.
-    /// If `None`, returns info for all messages.
+    /// List messages with their sizes.
+    ///
+    /// - `Some(id)` — returns size info for the single message with that number
+    /// - `None` — returns a list of all messages with their sizes
+    ///
+    /// Message numbers start at 1 per RFC 1939.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///
+    ///     // List all messages
+    ///     let all = client.list(None).await?;
+    ///     for entry in &all {
+    ///         println!("Message {}: {} bytes", entry.message_id, entry.size);
+    ///     }
+    ///
+    ///     // List a single message
+    ///     let single = client.list(Some(1)).await?;
+    ///     println!("Message 1 is {} bytes", single[0].size);
+    ///
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn list(&mut self, message_id: Option<u32>) -> Result<Vec<ListEntry>> {
         self.require_auth()?;
         match message_id {
@@ -116,8 +412,33 @@ impl Pop3Client {
         }
     }
 
-    /// Get unique IDs for messages. If `message_id` is `Some`, returns the UID for that
-    /// message only. If `None`, returns UIDs for all messages.
+    /// Get unique IDs (UIDs) for messages.
+    ///
+    /// UIDs are stable across sessions — use them to detect which messages were
+    /// already downloaded, even after the server renumbers messages.
+    ///
+    /// - `Some(id)` — returns the UID for the single message with that number
+    /// - `None` — returns UIDs for all messages
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///
+    ///     let uids = client.uidl(None).await?;
+    ///     for entry in &uids {
+    ///         println!("Message {}: UID {}", entry.message_id, entry.unique_id);
+    ///     }
+    ///
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn uidl(&mut self, message_id: Option<u32>) -> Result<Vec<UidlEntry>> {
         self.require_auth()?;
         match message_id {
@@ -135,7 +456,27 @@ impl Pop3Client {
         }
     }
 
-    /// Retrieve a message by its message number.
+    /// Retrieve a full message by its message number.
+    ///
+    /// Returns the complete message content (headers + body) as a [`Message`].
+    /// Dot-unstuffing is applied per RFC 1939 — double-leading dots are reduced
+    /// to single dots.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///     let msg = client.retr(1).await?;
+    ///     println!("{}", msg.data);
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn retr(&mut self, message_id: u32) -> Result<Message> {
         self.require_auth()?;
         validate_message_id(message_id)?;
@@ -145,6 +486,25 @@ impl Pop3Client {
     }
 
     /// Mark a message for deletion.
+    ///
+    /// The message is not immediately deleted — it is removed when the session
+    /// ends via [`quit`](Self::quit). Use [`rset`](Self::rset) to unmark
+    /// all pending deletions before `quit`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///     client.dele(1).await?; // mark message 1 for deletion
+    ///     client.quit().await?; // deletion is committed here
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn dele(&mut self, message_id: u32) -> Result<()> {
         self.require_auth()?;
         validate_message_id(message_id)?;
@@ -152,25 +512,82 @@ impl Pop3Client {
         Ok(())
     }
 
-    /// Reset the session — unmark all messages marked for deletion.
+    /// Reset the session, unmarking all messages that were marked for deletion.
+    ///
+    /// After `rset()`, no messages will be deleted when the session ends.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///     client.dele(1).await?;
+    ///     client.rset().await?; // cancel the deletion
+    ///     client.quit().await?; // message 1 is NOT deleted
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn rset(&mut self) -> Result<()> {
         self.require_auth()?;
         self.send_and_check("RSET").await?;
         Ok(())
     }
 
-    /// No-op, keeps the connection alive.
+    /// Send a no-op command to keep the connection alive.
+    ///
+    /// Useful for long-lived connections where the server may time out idle
+    /// sessions. The server replies with `+OK` and takes no other action.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///     client.noop().await?; // keepalive ping
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn noop(&mut self) -> Result<()> {
         self.require_auth()?;
         self.send_and_check("NOOP").await?;
         Ok(())
     }
 
-    /// End the session. Messages marked for deletion are removed.
+    /// End the session, committing any pending deletions.
     ///
-    /// This method consumes the client, preventing any further use.
-    /// If the caller drops the client without calling quit(), the TCP
-    /// connection closes silently and pending DELE marks are NOT committed.
+    /// This method **consumes** `self`, providing a compile-time guarantee that
+    /// no further commands can be issued after the session ends.
+    ///
+    /// Messages marked for deletion via [`dele`](Self::dele) are permanently
+    /// removed when `quit` completes. Call [`rset`](Self::rset) before `quit`
+    /// to cancel all pending deletions.
+    ///
+    /// Dropping a `Pop3Client` without calling `quit()` closes the TCP connection
+    /// silently — pending `DELE` marks are **not** committed.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///     client.quit().await?;
+    ///     // client is consumed — no further use is possible
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn quit(self) -> Result<()> {
         let mut this = self;
         this.transport.send_command("QUIT").await?;
@@ -181,6 +598,25 @@ impl Pop3Client {
     }
 
     /// Retrieve the headers and the first `lines` lines of a message body.
+    ///
+    /// Useful for previewing messages without downloading the full content.
+    /// Pass `lines = 0` to retrieve only the headers.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///     let preview = client.top(1, 5).await?; // headers + 5 body lines
+    ///     println!("{}", preview.data);
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn top(&mut self, message_id: u32, lines: u32) -> Result<Message> {
         self.require_auth()?;
         validate_message_id(message_id)?;
@@ -190,7 +626,28 @@ impl Pop3Client {
         Ok(Message { data })
     }
 
-    /// Query server capabilities.
+    /// Query the server for its supported capabilities (RFC 2449).
+    ///
+    /// Returns a list of [`Capability`] items. Common capabilities include
+    /// `TOP`, `UIDL`, `SASL`, and `STLS`. This command is permitted before
+    /// authentication.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     let caps = client.capa().await?;
+    ///     for cap in &caps {
+    ///         println!("{}: {:?}", cap.name, cap.arguments);
+    ///     }
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn capa(&mut self) -> Result<Vec<Capability>> {
         self.send_and_check("CAPA").await?;
         let body = self.transport.read_multiline().await?;
@@ -260,6 +717,22 @@ mod tests {
         // Compile-time proof that SessionState implements Debug
         let state = SessionState::Connected;
         let _ = format!("{:?}", state);
+    }
+
+    // --- is_encrypted: plain/mock connections are not encrypted ---
+
+    #[test]
+    fn is_encrypted_returns_false_for_plain_client() {
+        let mock = Builder::new().build();
+        let client = build_test_client(mock);
+        assert!(!client.is_encrypted());
+    }
+
+    #[test]
+    fn is_encrypted_returns_false_for_authenticated_client() {
+        let mock = Builder::new().build();
+        let client = build_authenticated_test_client(mock);
+        assert!(!client.is_encrypted());
     }
 
     // --- FIX-01: rset() must send "RSET\r\n", not "RETR\r\n" ---
@@ -664,6 +1137,181 @@ mod tests {
             Pop3Error::ServerError(_) => {}
             other => panic!("expected ServerError, got: {other:?}"),
         }
+    }
+
+    // --- Multi-command integration flow tests ---
+
+    #[tokio::test]
+    async fn full_session_flow() {
+        let mock = Builder::new()
+            .write(b"USER alice\r\n")
+            .read(b"+OK\r\n")
+            .write(b"PASS secret\r\n")
+            .read(b"+OK logged in\r\n")
+            .write(b"STAT\r\n")
+            .read(b"+OK 2 5000\r\n")
+            .write(b"LIST\r\n")
+            .read(b"+OK\r\n1 2500\r\n2 2500\r\n.\r\n")
+            .write(b"RETR 1\r\n")
+            .read(b"+OK\r\nSubject: Hello\r\n\r\nBody\r\n.\r\n")
+            .write(b"QUIT\r\n")
+            .read(b"+OK goodbye\r\n")
+            .build();
+
+        let mut client = build_test_client(mock);
+
+        // Login
+        client.login("alice", "secret").await.unwrap();
+        assert_eq!(client.state(), SessionState::Authenticated);
+
+        // Stat
+        let stat = client.stat().await.unwrap();
+        assert_eq!(stat.message_count, 2);
+        assert_eq!(stat.mailbox_size, 5000);
+
+        // List all
+        let entries = client.list(None).await.unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].size, 2500);
+
+        // Retr
+        let msg = client.retr(1).await.unwrap();
+        assert!(msg.data.contains("Subject: Hello"));
+
+        // Quit (consumes client)
+        client.quit().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn capa_then_login_then_top_flow() {
+        let mock = Builder::new()
+            // CAPA before login
+            .write(b"CAPA\r\n")
+            .read(b"+OK\r\nTOP\r\nUIDL\r\nSASL PLAIN\r\nSTLS\r\n.\r\n")
+            // Login
+            .write(b"USER bob\r\n")
+            .read(b"+OK\r\n")
+            .write(b"PASS pass123\r\n")
+            .read(b"+OK welcome\r\n")
+            // TOP
+            .write(b"TOP 1 3\r\n")
+            .read(b"+OK\r\nFrom: sender@example.com\r\nSubject: Test\r\n\r\nLine 1\r\nLine 2\r\nLine 3\r\n.\r\n")
+            // QUIT
+            .write(b"QUIT\r\n")
+            .read(b"+OK bye\r\n")
+            .build();
+
+        let mut client = build_test_client(mock);
+
+        // CAPA (pre-auth, per RFC 2449)
+        let caps = client.capa().await.unwrap();
+        assert_eq!(caps.len(), 4);
+        assert!(caps.iter().any(|c| c.name == "TOP"));
+        assert!(caps.iter().any(|c| c.name == "STLS"));
+
+        // Login
+        client.login("bob", "pass123").await.unwrap();
+
+        // TOP 1 3 (headers + 3 lines)
+        let msg = client.top(1, 3).await.unwrap();
+        assert!(msg.data.contains("From: sender@example.com"));
+        assert!(msg.data.contains("Subject: Test"));
+        assert!(msg.data.contains("Line 1"));
+        assert!(msg.data.contains("Line 3"));
+
+        // Quit
+        client.quit().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn uidl_then_dele_then_rset_flow() {
+        let mock = Builder::new()
+            .write(b"USER user\r\n")
+            .read(b"+OK\r\n")
+            .write(b"PASS pass\r\n")
+            .read(b"+OK\r\n")
+            // UIDL all
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n1 msg-aaa\r\n2 msg-bbb\r\n3 msg-ccc\r\n.\r\n")
+            // DELE 2
+            .write(b"DELE 2\r\n")
+            .read(b"+OK message 2 deleted\r\n")
+            // RSET (undelete)
+            .write(b"RSET\r\n")
+            .read(b"+OK\r\n")
+            // NOOP
+            .write(b"NOOP\r\n")
+            .read(b"+OK\r\n")
+            // QUIT
+            .write(b"QUIT\r\n")
+            .read(b"+OK\r\n")
+            .build();
+
+        let mut client = build_test_client(mock);
+        client.login("user", "pass").await.unwrap();
+
+        // UIDL all
+        let uids = client.uidl(None).await.unwrap();
+        assert_eq!(uids.len(), 3);
+        assert_eq!(uids[1].unique_id, "msg-bbb");
+
+        // DELE
+        client.dele(2).await.unwrap();
+
+        // RSET (unmark deletion)
+        client.rset().await.unwrap();
+
+        // NOOP (keepalive)
+        client.noop().await.unwrap();
+
+        // Quit
+        client.quit().await.unwrap();
+    }
+
+    // --- stls: STARTTLS RFC 2595 guards ---
+
+    #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+    #[tokio::test]
+    async fn stls_rejects_when_authenticated() {
+        let mock = Builder::new().build();
+        let mut client = build_authenticated_test_client(mock);
+        let result = client.stls("example.com").await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Pop3Error::ServerError(msg) => {
+                assert!(msg.contains("not allowed after authentication"))
+            }
+            other => panic!("expected ServerError, got: {other:?}"),
+        }
+    }
+
+    #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+    #[tokio::test]
+    async fn stls_rejects_server_err() {
+        let mock = Builder::new()
+            .write(b"STLS\r\n")
+            .read(b"-ERR STLS not supported\r\n")
+            .build();
+        let mut client = build_test_client(mock);
+        let result = client.stls("example.com").await;
+        assert!(matches!(result, Err(Pop3Error::ServerError(_))));
+    }
+
+    #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+    #[tokio::test]
+    async fn stls_sends_command_correctly() {
+        // Mock returns +OK, then upgrade will fail because Mock is not a real
+        // TCP stream (it's InnerStream::Mock, not InnerStream::Plain). The test
+        // verifies the STLS command was sent and +OK was received before the
+        // upgrade attempt.
+        let mock = Builder::new()
+            .write(b"STLS\r\n")
+            .read(b"+OK begin TLS negotiation\r\n")
+            .build();
+        let mut client = build_test_client(mock);
+        let result = client.stls("example.com").await;
+        // upgrade_in_place fails because mock is not a Plain TcpStream — expected
+        assert!(result.is_err());
     }
 
     // --- Not-authenticated guard: commands require authentication ---

@@ -31,17 +31,17 @@ Requirements for v2.0 release. Each maps to roadmap phases.
 
 ### TLS
 
-- [ ] **TLS-01**: User can connect via TLS-on-connect (port 995) using rustls backend
-- [ ] **TLS-02**: User can connect via TLS-on-connect using openssl backend
-- [ ] **TLS-03**: TLS backend selected via Cargo feature flags (`rustls-tls`, `openssl-tls`)
-- [ ] **TLS-04**: Simultaneous activation of both TLS features produces a compile error
-- [ ] **TLS-05**: User can upgrade a plain TCP connection to TLS via STARTTLS (STLS command)
-- [ ] **TLS-06**: STARTTLS correctly drains BufReader before stream upgrade
+- [x] **TLS-01**: User can connect via TLS-on-connect (port 995) using rustls backend
+- [x] **TLS-02**: User can connect via TLS-on-connect using openssl backend
+- [x] **TLS-03**: TLS backend selected via Cargo feature flags (`rustls-tls`, `openssl-tls`)
+- [x] **TLS-04**: Simultaneous activation of both TLS features produces a compile error
+- [x] **TLS-05**: User can upgrade a plain TCP connection to TLS via STARTTLS (STLS command)
+- [x] **TLS-06**: STARTTLS correctly drains BufReader before stream upgrade
 
 ### POP3 Commands
 
-- [ ] **CMD-01**: User can retrieve message headers + N lines via TOP command
-- [ ] **CMD-02**: User can query server capabilities via CAPA command
+- [x] **CMD-01**: User can retrieve message headers + N lines via TOP command
+- [x] **CMD-02**: User can query server capabilities via CAPA command
 - [ ] **CMD-03**: User can authenticate via APOP (with documented MD5 security caveat)
 - [ ] **CMD-04**: Server RESP-CODES are parsed into structured `Pop3Error` variants
 
@@ -55,10 +55,10 @@ Requirements for v2.0 release. Each maps to roadmap phases.
 ### Quality
 
 - [x] **QUAL-01**: Unit tests cover all response parsing functions via mock I/O
-- [ ] **QUAL-02**: Integration tests cover connect, auth, and command flows via mock POP3 server
+- [x] **QUAL-02**: Integration tests cover connect, auth, and command flows via mock POP3 server
 - [x] **QUAL-03**: GitHub Actions CI runs tests, clippy, and format checks
-- [ ] **QUAL-04**: CI matrix tests both `rustls-tls` and `openssl-tls` feature flags
-- [ ] **QUAL-05**: All public items have rustdoc with working doctests
+- [x] **QUAL-04**: CI matrix tests both `rustls-tls` and `openssl-tls` feature flags
+- [x] **QUAL-05**: All public items have rustdoc with working doctests
 
 ## v3.0 Requirements
 
@@ -145,17 +145,17 @@ Which phases cover which requirements. Updated during roadmap creation.
 | API-03 | Phase 2 | Complete |
 | API-04 | Phase 2 | Complete |
 | QUAL-03 | Phase 2 | Complete |
-| TLS-01 | Phase 3 | Pending |
-| TLS-02 | Phase 3 | Pending |
-| TLS-03 | Phase 3 | Pending |
-| TLS-04 | Phase 3 | Pending |
-| TLS-05 | Phase 3 | Pending |
-| TLS-06 | Phase 3 | Pending |
-| CMD-01 | Phase 3 | Pending |
-| CMD-02 | Phase 3 | Pending |
-| QUAL-02 | Phase 3 | Pending |
-| QUAL-04 | Phase 3 | Pending |
-| QUAL-05 | Phase 3 | Pending |
+| TLS-01 | Phase 3 | Complete (03-01) |
+| TLS-02 | Phase 3 | Complete (03-02) |
+| TLS-03 | Phase 3 | Complete (03-01) |
+| TLS-04 | Phase 3 | Complete (03-01) |
+| TLS-05 | Phase 3 | Complete (03-02) |
+| TLS-06 | Phase 3 | Complete (03-02) |
+| CMD-01 | Phase 3 | Complete (03-03) |
+| CMD-02 | Phase 3 | Complete (03-03) |
+| QUAL-02 | Phase 3 | Complete (03-03) |
+| QUAL-04 | Phase 3 | Complete |
+| QUAL-05 | Phase 3 | Complete |
 | CMD-03 | Phase 4 | Pending |
 | CMD-04 | Phase 4 | Pending |
 | API-01 | Phase 4 | Pending |

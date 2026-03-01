@@ -1,6 +1,8 @@
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
-use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{self, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
 use tokio::net::TcpStream;
 
 use crate::error::{Pop3Error, Result};
@@ -8,10 +10,108 @@ use crate::error::{Pop3Error, Result};
 /// Default read timeout for POP3 operations (30 seconds).
 pub(crate) const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Concrete stream types — enables unsplit() for STARTTLS upgrade.
+enum InnerStream {
+    Plain(TcpStream),
+    #[cfg(feature = "rustls-tls")]
+    RustlsTls(Box<tokio_rustls::client::TlsStream<TcpStream>>),
+    #[cfg(feature = "openssl-tls")]
+    OpensslTls(tokio_openssl::SslStream<TcpStream>),
+    #[cfg(test)]
+    Mock(tokio_test::io::Mock),
+    /// Temporary placeholder during STARTTLS upgrade (Plan 02). Never performs real I/O;
+    /// this variant exists only transiently inside upgrade_in_place and is immediately
+    /// replaced by the TLS variant before the method returns.
+    #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+    #[allow(dead_code)]
+    Upgrading,
+}
+
+impl AsyncRead for InnerStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            InnerStream::Plain(s) => Pin::new(s).poll_read(cx, buf),
+            #[cfg(feature = "rustls-tls")]
+            InnerStream::RustlsTls(s) => Pin::new(s.as_mut()).poll_read(cx, buf),
+            #[cfg(feature = "openssl-tls")]
+            InnerStream::OpensslTls(s) => Pin::new(s).poll_read(cx, buf),
+            #[cfg(test)]
+            InnerStream::Mock(s) => Pin::new(s).poll_read(cx, buf),
+            #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+            InnerStream::Upgrading => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "stream is upgrading to TLS",
+            ))),
+        }
+    }
+}
+
+impl AsyncWrite for InnerStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        match self.get_mut() {
+            InnerStream::Plain(s) => Pin::new(s).poll_write(cx, buf),
+            #[cfg(feature = "rustls-tls")]
+            InnerStream::RustlsTls(s) => Pin::new(s).poll_write(cx, buf),
+            #[cfg(feature = "openssl-tls")]
+            InnerStream::OpensslTls(s) => Pin::new(s).poll_write(cx, buf),
+            #[cfg(test)]
+            InnerStream::Mock(s) => Pin::new(s).poll_write(cx, buf),
+            #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+            InnerStream::Upgrading => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "stream is upgrading to TLS",
+            ))),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            InnerStream::Plain(s) => Pin::new(s).poll_flush(cx),
+            #[cfg(feature = "rustls-tls")]
+            InnerStream::RustlsTls(s) => Pin::new(s).poll_flush(cx),
+            #[cfg(feature = "openssl-tls")]
+            InnerStream::OpensslTls(s) => Pin::new(s).poll_flush(cx),
+            #[cfg(test)]
+            InnerStream::Mock(s) => Pin::new(s).poll_flush(cx),
+            #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+            InnerStream::Upgrading => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "stream is upgrading to TLS",
+            ))),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            InnerStream::Plain(s) => Pin::new(s).poll_shutdown(cx),
+            #[cfg(feature = "rustls-tls")]
+            InnerStream::RustlsTls(s) => Pin::new(s).poll_shutdown(cx),
+            #[cfg(feature = "openssl-tls")]
+            InnerStream::OpensslTls(s) => Pin::new(s).poll_shutdown(cx),
+            #[cfg(test)]
+            InnerStream::Mock(s) => Pin::new(s).poll_shutdown(cx),
+            #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+            InnerStream::Upgrading => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "stream is upgrading to TLS",
+            ))),
+        }
+    }
+}
+
 pub(crate) struct Transport {
-    reader: BufReader<Box<dyn io::AsyncRead + Unpin + Send>>,
-    writer: Box<dyn io::AsyncWrite + Unpin + Send>,
+    reader: BufReader<io::ReadHalf<InnerStream>>,
+    writer: io::WriteHalf<InnerStream>,
     timeout: Duration,
+    encrypted: bool,
 }
 
 impl Transport {
@@ -21,18 +121,104 @@ impl Transport {
         timeout: Duration,
     ) -> Result<Self> {
         let stream = TcpStream::connect(addr).await?;
-        let (read_half, write_half) = io::split(stream);
+        let inner = InnerStream::Plain(stream);
+        let (read_half, write_half) = io::split(inner);
         Ok(Transport {
-            reader: BufReader::new(Box::new(read_half)),
-            writer: Box::new(write_half),
+            reader: BufReader::new(read_half),
+            writer: write_half,
             timeout,
+            encrypted: false,
         })
     }
 
-    /// Connect over TLS.
-    ///
-    /// Not yet supported in the async rewrite — TLS will be added in Phase 3.
-    // Phase 3 will call this from the TLS connection method; kept here as a stub.
+    /// Connect over TLS using rustls.
+    #[cfg(feature = "rustls-tls")]
+    pub(crate) async fn connect_tls(
+        addr: impl tokio::net::ToSocketAddrs,
+        hostname: &str,
+        timeout: Duration,
+    ) -> Result<Self> {
+        use std::sync::Arc;
+        use tokio_rustls::rustls::{ClientConfig, RootCertStore};
+        use tokio_rustls::TlsConnector;
+
+        // Validate hostname — use the pki_types re-export from tokio_rustls
+        let server_name =
+            tokio_rustls::rustls::pki_types::ServerName::try_from(hostname.to_owned())
+                .map_err(|e| Pop3Error::InvalidDnsName(e.to_string()))?;
+
+        // Load system trust store (rustls-native-certs 0.8 API)
+        let native_certs = rustls_native_certs::load_native_certs();
+        // native_certs.errors contains non-fatal cert load errors
+        let mut root_store = RootCertStore::empty();
+        for cert in native_certs.certs {
+            root_store
+                .add(cert)
+                .map_err(|e| Pop3Error::Tls(e.to_string()))?;
+        }
+
+        let config = ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        let connector = TlsConnector::from(Arc::new(config));
+
+        let tcp_stream = TcpStream::connect(addr).await?;
+        let tls_stream = connector
+            .connect(server_name, tcp_stream)
+            .await
+            .map_err(|e| Pop3Error::Tls(e.to_string()))?;
+
+        let inner = InnerStream::RustlsTls(Box::new(tls_stream));
+        let (read_half, write_half) = io::split(inner);
+        Ok(Transport {
+            reader: BufReader::new(read_half),
+            writer: write_half,
+            timeout,
+            encrypted: true,
+        })
+    }
+
+    /// Connect over TLS using OpenSSL.
+    #[cfg(feature = "openssl-tls")]
+    pub(crate) async fn connect_tls(
+        addr: impl tokio::net::ToSocketAddrs,
+        hostname: &str,
+        timeout: Duration,
+    ) -> Result<Self> {
+        use openssl::ssl::{SslConnector, SslMethod};
+        use tokio_openssl::SslStream;
+
+        let connector = SslConnector::builder(SslMethod::tls())
+            .map_err(|e| Pop3Error::Tls(e.to_string()))?
+            .build();
+
+        let ssl = connector
+            .configure()
+            .map_err(|e| Pop3Error::Tls(e.to_string()))?
+            .into_ssl(hostname)
+            .map_err(|e| Pop3Error::Tls(e.to_string()))?;
+
+        let tcp_stream = TcpStream::connect(addr).await?;
+        let mut tls_stream =
+            SslStream::new(ssl, tcp_stream).map_err(|e| Pop3Error::Tls(e.to_string()))?;
+
+        std::pin::Pin::new(&mut tls_stream)
+            .connect()
+            .await
+            .map_err(|e| Pop3Error::Tls(e.to_string()))?;
+
+        let inner = InnerStream::OpensslTls(tls_stream);
+        let (read_half, write_half) = io::split(inner);
+        Ok(Transport {
+            reader: BufReader::new(read_half),
+            writer: write_half,
+            timeout,
+            encrypted: true,
+        })
+    }
+
+    /// Stub for when no TLS feature is active.
+    #[cfg(not(any(feature = "rustls-tls", feature = "openssl-tls")))]
     #[allow(dead_code)]
     pub(crate) async fn connect_tls(
         _addr: impl tokio::net::ToSocketAddrs,
@@ -41,8 +227,122 @@ impl Transport {
     ) -> Result<Self> {
         Err(Pop3Error::Io(io::Error::new(
             io::ErrorKind::Unsupported,
-            "TLS not yet supported in async mode — use Phase 3",
+            "TLS not available — enable the `rustls-tls` or `openssl-tls` feature",
         )))
+    }
+
+    /// Returns `true` if the connection is encrypted via TLS.
+    pub(crate) fn is_encrypted(&self) -> bool {
+        self.encrypted
+    }
+
+    /// Upgrade a plain TCP connection to TLS in-place (STARTTLS).
+    ///
+    /// Verifies the BufReader buffer is empty before upgrading. Uses the
+    /// `Upgrading` placeholder variant to safely swap the halves, recovers the
+    /// original `TcpStream` via `unsplit()`, performs a TLS handshake, then
+    /// rebuilds `reader` and `writer` with the new TLS stream.
+    #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
+    #[allow(dead_code)] // Used in Plan 02 (STARTTLS) — not yet called from client.rs
+    pub(crate) async fn upgrade_in_place(&mut self, hostname: &str) -> Result<()> {
+        let pending = self.reader.buffer().len();
+        if pending > 0 {
+            return Err(Pop3Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unexpected {} bytes in buffer before TLS upgrade", pending),
+            )));
+        }
+
+        if self.encrypted {
+            return Err(Pop3Error::Tls(
+                "connection is already encrypted".to_string(),
+            ));
+        }
+
+        let (placeholder_read, placeholder_write) = io::split(InnerStream::Upgrading);
+
+        let old_reader = std::mem::replace(&mut self.reader, BufReader::new(placeholder_read));
+        let old_writer = std::mem::replace(&mut self.writer, placeholder_write);
+
+        let read_half = old_reader.into_inner();
+        let inner_stream = read_half.unsplit(old_writer);
+
+        let tcp_stream = match inner_stream {
+            InnerStream::Plain(tcp) => tcp,
+            _ => {
+                return Err(Pop3Error::Tls(
+                    "upgrade_in_place requires a plain TCP connection".to_string(),
+                ));
+            }
+        };
+
+        let tls_inner = Self::tls_handshake(tcp_stream, hostname).await?;
+
+        let (new_read, new_write) = io::split(tls_inner);
+        self.reader = BufReader::new(new_read);
+        self.writer = new_write;
+        self.encrypted = true;
+
+        Ok(())
+    }
+
+    #[cfg(feature = "rustls-tls")]
+    #[allow(dead_code)] // Used by upgrade_in_place (Plan 02)
+    async fn tls_handshake(tcp_stream: TcpStream, hostname: &str) -> Result<InnerStream> {
+        use std::sync::Arc;
+        use tokio_rustls::rustls::{ClientConfig, RootCertStore};
+        use tokio_rustls::TlsConnector;
+
+        let server_name =
+            tokio_rustls::rustls::pki_types::ServerName::try_from(hostname.to_owned())
+                .map_err(|e| Pop3Error::InvalidDnsName(e.to_string()))?;
+
+        let native_certs = rustls_native_certs::load_native_certs();
+        let mut root_store = RootCertStore::empty();
+        for cert in native_certs.certs {
+            root_store
+                .add(cert)
+                .map_err(|e| Pop3Error::Tls(e.to_string()))?;
+        }
+
+        let config = ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        let connector = TlsConnector::from(Arc::new(config));
+
+        let tls_stream = connector
+            .connect(server_name, tcp_stream)
+            .await
+            .map_err(|e| Pop3Error::Tls(e.to_string()))?;
+
+        Ok(InnerStream::RustlsTls(Box::new(tls_stream)))
+    }
+
+    #[cfg(feature = "openssl-tls")]
+    #[allow(dead_code)] // Used by upgrade_in_place (Plan 02)
+    async fn tls_handshake(tcp_stream: TcpStream, hostname: &str) -> Result<InnerStream> {
+        use openssl::ssl::{SslConnector, SslMethod};
+        use tokio_openssl::SslStream;
+
+        let connector = SslConnector::builder(SslMethod::tls())
+            .map_err(|e| Pop3Error::Tls(e.to_string()))?
+            .build();
+
+        let ssl = connector
+            .configure()
+            .map_err(|e| Pop3Error::Tls(e.to_string()))?
+            .into_ssl(hostname)
+            .map_err(|e| Pop3Error::Tls(e.to_string()))?;
+
+        let mut tls_stream =
+            SslStream::new(ssl, tcp_stream).map_err(|e| Pop3Error::Tls(e.to_string()))?;
+
+        std::pin::Pin::new(&mut tls_stream)
+            .connect()
+            .await
+            .map_err(|e| Pop3Error::Tls(e.to_string()))?;
+
+        Ok(InnerStream::OpensslTls(tls_stream))
     }
 
     /// Send a command to the server (appends CRLF).
@@ -103,11 +403,13 @@ impl Transport {
     /// Write expectations are baked into the mock — the builder panics if the
     /// actual write differs, so there is no need to return a separate writer handle.
     pub(crate) fn mock(mock: tokio_test::io::Mock) -> Self {
-        let (read_half, write_half) = io::split(mock);
+        let inner = InnerStream::Mock(mock);
+        let (read_half, write_half) = io::split(inner);
         Transport {
-            reader: BufReader::new(Box::new(read_half)),
-            writer: Box::new(write_half),
+            reader: BufReader::new(read_half),
+            writer: write_half,
             timeout: Duration::from_secs(30),
+            encrypted: false,
         }
     }
 }
@@ -153,5 +455,12 @@ mod tests {
         let mut transport = Transport::mock(mock);
         let line = transport.read_line().await.unwrap();
         assert_eq!(line, "+OK ready\r\n");
+    }
+
+    #[tokio::test]
+    async fn is_encrypted_false_for_mock() {
+        let mock = Builder::new().build();
+        let transport = Transport::mock(mock);
+        assert!(!transport.is_encrypted());
     }
 }

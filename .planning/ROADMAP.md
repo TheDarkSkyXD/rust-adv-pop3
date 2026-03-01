@@ -19,7 +19,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **v2.0 Phases:**
 - [x] **Phase 1: Foundation** - Fix known bugs, establish error handling, and build test infrastructure
 - [x] **Phase 2: Async Core** - Migrate all I/O to async/await, port all v1 commands, set up CI
-- [ ] **Phase 3: TLS and Publish** - Add dual TLS backends, remaining commands, docs, and ship v2.0.0
+- [x] **Phase 3: TLS and Publish** - Add dual TLS backends, remaining commands, docs, and ship v2.0.0 (completed 2026-03-01)
 - [ ] **Phase 4: Protocol Extensions** - Add APOP, RESP-CODES, and builder pattern API
 
 **v3.0 Phases:**
@@ -72,7 +72,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. `CAPA` and `TOP` commands work and are covered by integration tests against a mock server
   5. Every public type, function, and method has a rustdoc comment with a working doctest (`cargo test --doc` passes)
   6. The CI matrix tests both `rustls-tls` and `openssl-tls` feature flags
-**Plans**: TBD
+**Plans:** 4/4 plans complete
+- [x] 03-01-PLAN.md — Feature flags, InnerStream enum, error refactor, rustls connect_tls, Pop3Client TLS methods (TLS-01, TLS-03, TLS-04)
+- [x] 03-02-PLAN.md — OpenSSL backend, STARTTLS upgrade_in_place, stls() method (TLS-02, TLS-05, TLS-06)
+- [x] 03-03-PLAN.md — Integration tests for full POP3 flows, TOP and CAPA coverage (CMD-01, CMD-02, QUAL-02)
+- [x] 03-04-PLAN.md — Rustdoc with doctests, CI matrix, README, examples, publish prep (QUAL-04, QUAL-05)
 
 ### Phase 4: Protocol Extensions
 **Goal**: The library supports APOP authentication, structured RESP-CODES error parsing, and a fluent builder API — rounding out the v2.x feature set
@@ -146,7 +150,7 @@ v3.0 phases execute in order: 5 → 6 → 7 → 8 → 9 (Phase 6 can run in para
 |-------|----------------|--------|-----------|
 | 1. Foundation | 2/2 | Complete | 2026-03-01 |
 | 2. Async Core | 4/4 | Complete (verified) | 2026-03-01 |
-| 3. TLS and Publish | 0/? | Not started | - |
+| 3. TLS and Publish | 4/4 | Complete   | 2026-03-01 |
 | 4. Protocol Extensions | 0/? | Not started | - |
 | 5. Pipelining | 0/? | Not started | - |
 | 6. UIDL Caching | 0/? | Not started | - |
