@@ -32,6 +32,7 @@ required-features = ["rustls-tls"]
 default = ["rustls-tls"]
 rustls-tls = ["dep:tokio-rustls", "dep:rustls-native-certs"]
 openssl-tls = ["dep:tokio-openssl", "dep:openssl"]
+pool = ["dep:bb8"]
 
 [dependencies]
 tokio = { version = "1", features = ["net", "io-util", "time", "rt-multi-thread", "macros"] }
@@ -42,6 +43,7 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["ring"]
 rustls-native-certs = { version = "0.8", optional = true }
 tokio-openssl = { version = "0.6", optional = true }
 openssl = { version = "0.10", optional = true }
+bb8 = { version = "0.9", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"

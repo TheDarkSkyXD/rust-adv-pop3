@@ -207,8 +207,14 @@ impl Pop3ClientBuilder {
         self
     }
 
-    /// Resolve the effective port based on TLS mode and explicit override.
-    fn effective_port(&self) -> u16 {
+    /// Returns the hostname this builder is configured for.
+    #[cfg(feature = "pool")]
+    pub(crate) fn hostname(&self) -> &str {
+        &self.hostname
+    }
+
+    /// Returns the effective port (accounting for TLS mode and explicit override).
+    pub(crate) fn effective_port(&self) -> u16 {
         if let Some(port) = self.port {
             return port;
         }
@@ -216,6 +222,16 @@ impl Pop3ClientBuilder {
             #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
             TlsMode::Tls => 995,
             _ => 110,
+        }
+    }
+
+    /// Returns the username from the configured auth mode, if any.
+    #[cfg(feature = "pool")]
+    pub(crate) fn username(&self) -> Option<&str> {
+        match &self.auth {
+            AuthMode::Login { username, .. } => Some(username.as_str()),
+            AuthMode::Apop { username, .. } => Some(username.as_str()),
+            AuthMode::None => None,
         }
     }
 
