@@ -6,9 +6,9 @@ status: in_progress
 last_updated: "2026-03-01T23:59:00.000Z"
 progress:
   total_phases: 9
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 13
-  completed_plans: 11
+  completed_plans: 12
 ---
 
 # Project State
@@ -18,16 +18,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-01)
 
 **Core value:** Provide a correct, async, production-quality POP3 client that handles errors gracefully instead of panicking
-**Current focus:** Phase 4 (Protocol Extensions) in progress — 04-01 complete, ready for 04-02 (builder API).
+**Current focus:** Phase 4 (Protocol Extensions) complete — both 04-01 (RESP-CODES, APOP) and 04-02 (Pop3ClientBuilder) done. Ready for Phase 5 (Pipelining).
 
 ## Current Position
 
-Phase: 4 of 9 (Protocol Extensions) — IN PROGRESS
-Plan: 1 of 2 in current phase (just completed 04-01)
-Status: 04-01 complete — RESP-CODE parsing (MailboxInUse, LoginDelay, SysTemp, SysPerm variants), APOP auth with MD5 digest and #[deprecated], 88 unit + 2 integration + 20 doc tests passing.
-Last activity: 2026-03-01 — Completed 04-01 (RESP-CODES parsing, APOP authentication, md5 dependency)
+Phase: 4 of 9 (Protocol Extensions) — COMPLETE
+Plan: 2 of 2 in current phase (just completed 04-02)
+Status: 04-02 complete — Pop3ClientBuilder with consuming-chain fluent API, smart port defaults (110/995), auto-auth via .credentials()/.apop(), feature-gated .tls()/.starttls(), 16 builder unit tests, 103 unit + 2 integration + 27 doc tests passing.
+Last activity: 2026-03-02 — Completed 04-02 (Pop3ClientBuilder fluent API)
 
-Progress: [████░░░░░░] 38%
+Progress: [████░░░░░░] 44%
 
 ## Performance Metrics
 
@@ -43,11 +43,11 @@ Progress: [████░░░░░░] 38%
 | 01-foundation | 2 | 40 min | 20 min |
 | 02-async-core | 4 | ~40 min | ~10 min |
 | 03-tls-and-publish | 4 completed | ~60 min | ~15 min |
-| 04-protocol-extensions | 1 of 2 completed | ~4 min | ~4 min |
+| 04-protocol-extensions | 2 of 2 completed | ~6 min | ~3 min |
 
 **Recent Trend:**
-- Last 5 plans: 4 min, ~7 min, ~8 min, ~45 min, ~4 min
-- Trend: 04-01 was fast — well-specified plan, no blockers, RFC test vector matched on first attempt
+- Last 5 plans: ~7 min, ~8 min, ~45 min, ~4 min, ~2 min
+- Trend: 04-02 was very fast — complete plan spec, builder pattern is well-understood, single formatting fix only
 
 *Updated after each plan completion*
 
@@ -106,6 +106,10 @@ Recent decisions affecting current work:
 - [04-01]: apop() returns ServerError immediately if no timestamp in greeting — no silent fallback
 - [04-01]: apop() map_err promotes ServerError->AuthFailed; RESP-CODE variants pass through unchanged
 - [04-01]: apop() deprecated with note referencing login() as the preferred alternative
+- [04-02]: Pop3ClientBuilder::new(hostname) only — no convenience ::plain()/::tls() constructors; chain is fluent enough
+- [04-02]: Internal TlsMode and AuthMode enums are private — only builder methods are public API surface
+- [04-02]: Last-wins semantics for both TLS mode and auth mode — consistent, predictable behavior
+- [04-02]: Builder derives Debug and Clone — Clone required by Phase 8 connection pooling (bb8 reuse)
 
 ### Pending Todos
 
@@ -124,6 +128,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-01
-Stopped at: Completed 04-01-PLAN.md — RESP-CODE parsing (4 new Pop3Error variants: MailboxInUse, LoginDelay, SysTemp, SysPerm), parse_resp_code() helper, APOP authentication with MD5 digest and #[deprecated] + security warning rustdoc. md5 = "0.7" added. 88 unit + 2 integration + 20 doc tests passing. cargo clippy and fmt clean. Ready for 04-02 (builder API).
+Last session: 2026-03-02
+Stopped at: Completed 04-02-PLAN.md — Pop3ClientBuilder with consuming-chain fluent API, smart port defaults (110/995), auto-auth via .credentials()/.apop(), feature-gated .tls()/.starttls(), 16 builder unit tests, 103 unit + 2 integration + 27 doc tests passing. cargo clippy and fmt clean. Phase 4 complete. Ready for Phase 5 (Pipelining).
 Resume file: None

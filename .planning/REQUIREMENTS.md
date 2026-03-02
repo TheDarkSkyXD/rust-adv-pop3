@@ -47,8 +47,8 @@ Requirements for v2.0 release. Each maps to roadmap phases.
 
 ### API Design
 
-- [ ] **API-01**: `Pop3ClientBuilder` provides a fluent interface for connection configuration
-- [ ] **API-02**: Builder hides TLS feature flag complexity from callers
+- [x] **API-01**: `Pop3ClientBuilder` provides a fluent interface for connection configuration
+- [x] **API-02**: Builder hides TLS feature flag complexity from callers
 - [x] **API-03**: All public types derive `Debug`
 - [x] **API-04**: `Client` consumes `self` on `quit()` preventing use-after-disconnect
 
@@ -158,8 +158,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | QUAL-05 | Phase 3 | Complete |
 | CMD-03 | Phase 4 | Complete (04-01) |
 | CMD-04 | Phase 4 | Complete (04-01) |
-| API-01 | Phase 4 | Pending |
-| API-02 | Phase 4 | Pending |
+| API-01 | Phase 4 | Complete (04-02) |
+| API-02 | Phase 4 | Complete (04-02) |
 | PIPE-01 | Phase 5 | Pending |
 | PIPE-02 | Phase 5 | Pending |
 | PIPE-03 | Phase 5 | Pending |
