@@ -30,7 +30,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 9: MIME Integration** - Optional MIME parsing via mail-parser behind a feature flag (completed 2026-03-02)
 
 **Gap Closure:**
-- [ ] **Phase 10: Tech Debt Cleanup** - Pool double-login guard, stale dead_code removal, ROADMAP checkbox fix (gap closure from audit)
+- [x] **Phase 10: Tech Debt Cleanup** - Pool double-login guard, stale dead_code removal, ROADMAP checkbox fix (gap closure from audit, completed 2026-03-01)
 
 ## Phase Details
 
@@ -158,7 +158,8 @@ Decimal phases appear between their surrounding integers in numeric order.
   1. `Pop3ConnectionManager::connect()` checks whether the client is already authenticated after `builder.connect()` and skips `login()` if so — preventing the double-login trap
   2. All `#[allow(dead_code)]` annotations in `transport.rs` are removed for functions that are now called (`upgrade_in_place`, `tls_handshake` helpers)
   3. ROADMAP.md Phase 7 plan checkboxes are checked (already done in this update)
-**Plans**: TBD
+**Plans**: 1 plan
+- [x] 10-01-PLAN.md — Remove stale dead_code annotations and plan references from transport.rs, add double-login guard to pool connection manager (gap closure)
 
 ## Progress
 
@@ -177,4 +178,4 @@ v3.0 phases execute in order: 5 → 6 → 7 → 8 → 9 (Phase 6 can run in para
 | 7. Reconnection | 2/2 | Complete   | 2026-03-02 |
 | 8. Connection Pooling | 2/2 | Complete   | 2026-03-02 |
 | 9. MIME Integration | 1/1 | Complete   | 2026-03-02 |
-| 10. Tech Debt Cleanup | 0/1 | Pending | — |
+| 10. Tech Debt Cleanup | 1/1 | Complete   | 2026-03-02 |

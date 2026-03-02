@@ -135,14 +135,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-01)
 
 **Core value:** Provide a correct, async, production-quality POP3 client that handles errors gracefully instead of panicking
-**Current focus:** Phase 9 (MIME Integration) — COMPLETE. All 9 phases done.
+**Current focus:** Phase 10 (Tech Debt Cleanup) — COMPLETE. All 9 planned phases done + gap closure phase complete.
 
 ## Current Position
 
-Phase: 9 of 9 (MIME Integration) — Complete
-Plan: 1 of 1 in current phase (09-01 just completed)
-Status: Phase 9 complete — MIME parsing via mail-parser behind mime feature flag; retr_parsed/top_parsed, ParsedMessage alias, MimeParse error variant, 5 tests passing, CI matrix updated, examples/mime.rs. ALL PHASES COMPLETE.
-Last activity: 2026-03-02 — Completed 09-01 (MIME Integration)
+Phase: 10 of 10 (Tech Debt Cleanup) — Complete
+Plan: 1 of 1 in current phase (10-01 just completed)
+Status: Phase 10 complete — removed 3 stale #[allow(dead_code)] annotations and plan-phase references from transport.rs; added double-login guard (SessionState check) to Pop3ConnectionManager::connect(), auth rustdoc, and unit test. ALL PHASES COMPLETE (including gap-closure phase 10).
+Last activity: 2026-03-01 — Completed 10-01 (Tech Debt Cleanup)
 
 Progress: [██████████] 100%
 
@@ -166,6 +166,7 @@ Progress: [██████████] 100%
 | 07-reconnection | 2 of 2 complete | ~7 min | ~4 min |
 | 08-connection-pooling | 2 of 2 complete | ~9 min | ~5 min |
 | 09-mime-integration | 1 of 1 complete | ~4 min | ~4 min |
+| 10-tech-debt-cleanup | 1 of 1 complete | ~8 min | ~8 min |
 
 **Recent Trend:**
 - Last 5 plans: ~2 min, ~4 min, ~3 min, ~5 min, ~4 min
@@ -177,6 +178,7 @@ Progress: [██████████] 100%
 | Phase 08-connection-pooling P01 | 5 | 2 tasks | 3 files |
 | Phase 08-connection-pooling P02 | 4 | 2 tasks | 2 files |
 | Phase 09-mime-integration P09-01 | 4 | 2 tasks | 7 files |
+| Phase 10-tech-debt-cleanup P10-01 | 8 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -263,6 +265,8 @@ Recent decisions affecting current work:
 - [Phase 08-connection-pooling]: #[tokio::test] required for tests calling add_account — bb8 build_unchecked starts internal Tokio interval timer requiring runtime context
 - [Phase 09-01]: ParsedMessage = mail_parser::Message<'static> type alias — exposes full mail-parser API directly, no wrapping
 - [Phase 09-01]: MimeParse error variant is unconditional (not feature-gated) — enables exhaustive matching regardless of mime feature activation
+- [10-01]: Double-login guard uses client.state() != SessionState::Authenticated — idiomatic, leverages existing SessionState enum
+- [10-01]: Three stale #[allow(dead_code)] removed; two legitimate ones preserved (Upgrading variant, no-TLS connect_tls stub)
 
 ### Pending Todos
 
@@ -281,6 +285,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-02
-Stopped at: Completed 09-01-PLAN.md — MIME parsing via mail-parser behind mime feature flag; retr_parsed/top_parsed methods, ParsedMessage type alias, MimeParse error variant, 5 tests passing, CI matrix updated, examples/mime.rs. Phase 9 complete. ALL 9 PHASES COMPLETE.
+Last session: 2026-03-01
+Stopped at: Completed 10-01-PLAN.md — removed stale #[allow(dead_code)] from transport.rs, all plan-phase references removed, double-login guard added to Pop3ConnectionManager::connect() with SessionState check, auth rustdoc, and unit test. Phase 10 complete. ALL PHASES COMPLETE (10 total).
 Resume file: None
