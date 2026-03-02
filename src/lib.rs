@@ -97,6 +97,8 @@ compile_error!(
 mod builder;
 mod client;
 mod error;
+#[cfg(feature = "pool")]
+pub mod pool;
 pub mod reconnect;
 pub(crate) mod response;
 mod transport;
