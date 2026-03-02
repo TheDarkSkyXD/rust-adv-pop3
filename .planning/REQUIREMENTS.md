@@ -66,10 +66,10 @@ Requirements for v3.0 release. Each maps to roadmap phases 5+.
 
 ### Pipelining
 
-- [ ] **PIPE-01**: Client can send multiple POP3 commands without waiting for each response when server advertises PIPELINING (RFC 2449)
-- [ ] **PIPE-02**: Client automatically detects pipelining support via CAPA after authentication
-- [ ] **PIPE-03**: Client falls back to sequential mode when server does not advertise PIPELINING
-- [ ] **PIPE-04**: Pipelined commands use a windowed send strategy to prevent TCP send-buffer deadlock
+- [x] **PIPE-01**: Client can send multiple POP3 commands without waiting for each response when server advertises PIPELINING (RFC 2449)
+- [x] **PIPE-02**: Client automatically detects pipelining support via CAPA after authentication
+- [x] **PIPE-03**: Client falls back to sequential mode when server does not advertise PIPELINING
+- [x] **PIPE-04**: Pipelined commands use a windowed send strategy to prevent TCP send-buffer deadlock
 - [x] **PIPE-05**: Client provides batch methods (`retr_many`, `dele_many`) that pipeline automatically
 
 ### UIDL Caching
@@ -160,11 +160,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CMD-04 | Phase 4 | Complete (04-01) |
 | API-01 | Phase 4 | Complete (04-02) |
 | API-02 | Phase 4 | Complete (04-02) |
-| PIPE-01 | Phase 5 | Pending |
-| PIPE-02 | Phase 5 | Pending |
-| PIPE-03 | Phase 5 | Pending |
-| PIPE-04 | Phase 5 | Pending |
-| PIPE-05 | Phase 5 | Complete |
+| PIPE-01 | Phase 5 | Complete (05-02) |
+| PIPE-02 | Phase 5 | Complete (05-02) |
+| PIPE-03 | Phase 5 | Complete (05-02) |
+| PIPE-04 | Phase 5 | Complete (05-02) |
+| PIPE-05 | Phase 5 | Complete (05-02) |
 | CACHE-01 | Phase 6 | Pending |
 | CACHE-02 | Phase 6 | Pending |
 | CACHE-03 | Phase 6 | Pending |

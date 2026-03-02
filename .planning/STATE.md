@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: milestone
 status: in_progress
-last_updated: "2026-03-02T01:10:15Z"
+last_updated: "2026-03-02T01:19:00Z"
 progress:
   total_phases: 9
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 13
   completed_plans: 13
 ---
@@ -18,16 +18,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-01)
 
 **Core value:** Provide a correct, async, production-quality POP3 client that handles errors gracefully instead of panicking
-**Current focus:** Phase 5 (Pipelining) in progress — 05-01 (Transport Infrastructure) complete. Ready for 05-02 (batch methods: retr_many, dele_many).
+**Current focus:** Phase 5 (Pipelining) COMPLETE — both 05-01 and 05-02 done. Ready for Phase 6 (UIDL Caching).
 
 ## Current Position
 
-Phase: 5 of 9 (Pipelining) — IN PROGRESS
-Plan: 1 of 2 in current phase (just completed 05-01)
-Status: 05-01 complete — BufWriter on Transport writer, pub(crate) reader/writer/timeout, Pop3Error::ConnectionClosed variant, is_closed()/set_closed() on Transport, is_closed() on Pop3Client, 108 unit + 2 integration + 24 doc tests passing.
-Last activity: 2026-03-02 — Completed 05-01 (Transport Infrastructure for Pipelining)
+Phase: 5 of 9 (Pipelining) — COMPLETE
+Plan: 2 of 2 in current phase (just completed 05-02)
+Status: 05-02 complete — CAPA-based pipelining detection in login/apop, supports_pipelining() accessor, retr_many/dele_many batch methods with windowed pipelined path and sequential fallback, 124 unit + 2 integration + 27 doc tests passing.
+Last activity: 2026-03-02 — Completed 05-02 (CAPA Pipelining Detection + Batch Methods)
 
-Progress: [████░░░░░░] 50%
+Progress: [█████░░░░░] 56%
 
 ## Performance Metrics
 
@@ -115,6 +115,10 @@ Recent decisions affecting current work:
 - [05-01]: BufWriter default buffer size (8 KB) used — commands are ~15 bytes each, no tuning needed
 - [05-01]: ConnectionClosed wording is "connection closed" matching legacy EOF error message
 - [05-01]: is_closed is private bool on Transport, set by read_line() on EOF and by set_closed() after quit()
+- [05-02]: CAPA probe runs after every successful login() and apop() — automatic, errors silently suppressed; not all POP3 servers support CAPA (RFC 1939)
+- [05-02]: PIPELINE_WINDOW = 4 — conservative window preventing TCP send-buffer deadlock with large RETR responses
+- [05-02]: Per-item results Vec<Result<T>> for batch methods — individual -ERR does not abort batch; I/O errors fill remaining with ConnectionClosed
+- [05-02]: retr_many_pipelined/dele_many_pipelined are private — only retr_many/dele_many are public API; read_retr_response() private helper avoids parsing duplication
 
 ### Pending Todos
 
@@ -134,5 +138,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-02
-Stopped at: Completed 05-01-PLAN.md — BufWriter on Transport writer, pub(crate) reader/writer/timeout, Pop3Error::ConnectionClosed, is_closed()/set_closed() on Transport, is_closed() public on Pop3Client, quit() marks closed, 108 unit + 2 integration + 24 doc tests passing, clippy and fmt clean. Ready for 05-02 (batch pipelining methods).
+Stopped at: Completed 05-02-PLAN.md — CAPA-based pipelining detection in login/apop, supports_pipelining() accessor, retr_many/dele_many batch methods with windowed pipelining (PIPELINE_WINDOW=4) and sequential fallback, 124 unit + 2 integration + 27 doc tests passing, clippy and fmt clean. Phase 5 complete. Ready for Phase 6 (UIDL Caching).
 Resume file: None
