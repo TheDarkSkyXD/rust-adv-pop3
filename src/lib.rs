@@ -94,12 +94,14 @@ compile_error!(
      `cargo build --no-default-features --features openssl-tls`."
 );
 
+mod builder;
 mod client;
 mod error;
 pub(crate) mod response;
 mod transport;
 mod types;
 
+pub use builder::Pop3ClientBuilder;
 pub use client::Pop3Client;
 pub use error::{Pop3Error, Result};
 pub use types::{Capability, ListEntry, Message, SessionState, Stat, UidlEntry};

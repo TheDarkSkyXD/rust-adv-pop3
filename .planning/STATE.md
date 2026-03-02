@@ -2,26 +2,13 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: milestone
-status: unknown
-last_updated: "2026-03-01T22:38:44.496Z"
-progress:
-  total_phases: 3
-  completed_phases: 3
-  total_plans: 10
-  completed_plans: 10
----
-
----
-gsd_state_version: 1.0
-milestone: v2.0
-milestone_name: milestone
 status: in_progress
-last_updated: "2026-03-01T23:30:00.000Z"
+last_updated: "2026-03-01T23:59:00.000Z"
 progress:
   total_phases: 9
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 13
-  completed_plans: 10
+  completed_plans: 12
 ---
 
 # Project State
@@ -31,16 +18,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-01)
 
 **Core value:** Provide a correct, async, production-quality POP3 client that handles errors gracefully instead of panicking
-**Current focus:** Phase 3 complete — TLS and Publish (all 4 plans done). Ready for Phase 4.
+**Current focus:** Phase 4 (Protocol Extensions) complete — both 04-01 (RESP-CODES, APOP) and 04-02 (Pop3ClientBuilder) done. Ready for Phase 5 (Pipelining).
 
 ## Current Position
 
-Phase: 3 of 9 (TLS and Publish) — COMPLETE
-Plan: 4 of 4 in current phase (just completed)
-Status: Phase 3 complete — rustdoc on all public items, CI matrix for dual TLS backends, TLS examples, README, Cargo.toml publish-ready. cargo publish --dry-run passes.
-Last activity: 2026-03-01 — Completed 03-04 (comprehensive rustdoc, CI matrix, examples/tls.rs, examples/starttls.rs, README.md rewrite, Cargo.toml metadata update)
+Phase: 4 of 9 (Protocol Extensions) — COMPLETE
+Plan: 2 of 2 in current phase (just completed 04-02)
+Status: 04-02 complete — Pop3ClientBuilder with consuming-chain fluent API, smart port defaults (110/995), auto-auth via .credentials()/.apop(), feature-gated .tls()/.starttls(), 16 builder unit tests, 103 unit + 2 integration + 27 doc tests passing.
+Last activity: 2026-03-02 — Completed 04-02 (Pop3ClientBuilder fluent API)
 
-Progress: [███░░░░░░░] 33%
+Progress: [████░░░░░░] 44%
 
 ## Performance Metrics
 
@@ -56,10 +43,11 @@ Progress: [███░░░░░░░] 33%
 | 01-foundation | 2 | 40 min | 20 min |
 | 02-async-core | 4 | ~40 min | ~10 min |
 | 03-tls-and-publish | 4 completed | ~60 min | ~15 min |
+| 04-protocol-extensions | 2 of 2 completed | ~6 min | ~3 min |
 
 **Recent Trend:**
-- Last 5 plans: ~4 min, 4 min, ~7 min, ~8 min, ~45 min
-- Trend: Plan 04 was longer due to context window continuation and comprehensive documentation work
+- Last 5 plans: ~7 min, ~8 min, ~45 min, ~4 min, ~2 min
+- Trend: 04-02 was very fast — complete plan spec, builder pattern is well-understood, single formatting fix only
 
 *Updated after each plan completion*
 
@@ -112,6 +100,16 @@ Recent decisions affecting current work:
 - [Phase 03-04]: no_run for all network doctests — compile-verified without requiring a real POP3 server in CI
 - [Phase 03-04]: CI matrix tests rustls-tls and openssl-tls independently, plus plain no-TLS build
 - [Phase 03-04]: Repository URL updated to TheDarkSkyXD fork; readme field added to Cargo.toml for crates.io
+- [04-01]: parse_resp_code() strips bracket code, keeps text after ] — consistent with ServerError stripping -ERR
+- [04-01]: [AUTH] RESP-CODE maps to AuthFailed (not a new variant) — merges into existing semantic error
+- [04-01]: Unknown RESP-CODEs fall through to ServerError with full text preserved
+- [04-01]: apop() returns ServerError immediately if no timestamp in greeting — no silent fallback
+- [04-01]: apop() map_err promotes ServerError->AuthFailed; RESP-CODE variants pass through unchanged
+- [04-01]: apop() deprecated with note referencing login() as the preferred alternative
+- [04-02]: Pop3ClientBuilder::new(hostname) only — no convenience ::plain()/::tls() constructors; chain is fluent enough
+- [04-02]: Internal TlsMode and AuthMode enums are private — only builder methods are public API surface
+- [04-02]: Last-wins semantics for both TLS mode and auth mode — consistent, predictable behavior
+- [04-02]: Builder derives Debug and Clone — Clone required by Phase 8 connection pooling (bb8 reuse)
 
 ### Pending Todos
 
@@ -130,6 +128,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-01
-Stopped at: Completed 03-04-PLAN.md — comprehensive rustdoc on all public items, CI matrix for rustls-tls and openssl-tls backends, examples/tls.rs and examples/starttls.rs, README.md rewrite (async v2 API), Cargo.toml publish prep. All 90 tests pass (66 unit + 2 integration + 22 doc). cargo publish --dry-run passes. Phase 3 (TLS and Publish) is COMPLETE. Ready for Phase 4 planning.
+Last session: 2026-03-02
+Stopped at: Completed 04-02-PLAN.md — Pop3ClientBuilder with consuming-chain fluent API, smart port defaults (110/995), auto-auth via .credentials()/.apop(), feature-gated .tls()/.starttls(), 16 builder unit tests, 103 unit + 2 integration + 27 doc tests passing. cargo clippy and fmt clean. Phase 4 complete. Ready for Phase 5 (Pipelining).
 Resume file: None

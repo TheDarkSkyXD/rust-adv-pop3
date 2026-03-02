@@ -42,13 +42,13 @@ Requirements for v2.0 release. Each maps to roadmap phases.
 
 - [x] **CMD-01**: User can retrieve message headers + N lines via TOP command
 - [x] **CMD-02**: User can query server capabilities via CAPA command
-- [ ] **CMD-03**: User can authenticate via APOP (with documented MD5 security caveat)
-- [ ] **CMD-04**: Server RESP-CODES are parsed into structured `Pop3Error` variants
+- [x] **CMD-03**: User can authenticate via APOP (with documented MD5 security caveat)
+- [x] **CMD-04**: Server RESP-CODES are parsed into structured `Pop3Error` variants
 
 ### API Design
 
-- [ ] **API-01**: `Pop3ClientBuilder` provides a fluent interface for connection configuration
-- [ ] **API-02**: Builder hides TLS feature flag complexity from callers
+- [x] **API-01**: `Pop3ClientBuilder` provides a fluent interface for connection configuration
+- [x] **API-02**: Builder hides TLS feature flag complexity from callers
 - [x] **API-03**: All public types derive `Debug`
 - [x] **API-04**: `Client` consumes `self` on `quit()` preventing use-after-disconnect
 
@@ -156,10 +156,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | QUAL-02 | Phase 3 | Complete (03-03) |
 | QUAL-04 | Phase 3 | Complete |
 | QUAL-05 | Phase 3 | Complete |
-| CMD-03 | Phase 4 | Pending |
-| CMD-04 | Phase 4 | Pending |
-| API-01 | Phase 4 | Pending |
-| API-02 | Phase 4 | Pending |
+| CMD-03 | Phase 4 | Complete (04-01) |
+| CMD-04 | Phase 4 | Complete (04-01) |
+| API-01 | Phase 4 | Complete (04-02) |
+| API-02 | Phase 4 | Complete (04-02) |
 | PIPE-01 | Phase 5 | Pending |
 | PIPE-02 | Phase 5 | Pending |
 | PIPE-03 | Phase 5 | Pending |

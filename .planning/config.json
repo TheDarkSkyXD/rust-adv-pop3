@@ -1,5 +1,15 @@
 {
+  "model_profile": "balanced",
   "workflow": {
-    "research": true
+    "research": true,
+    "plan_check": true,
+    "verifier": true,
+    "auto_advance": false,
+    "nyquist_validation": true,
+    "parallel_waves": true,
+    "post_plan_auto_execute": false
+  },
+  "git": {
+    "branching_strategy": "none"
   }
 }

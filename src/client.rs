@@ -47,6 +47,23 @@ fn validate_message_id(id: u32) -> Result<()> {
     }
 }
 
+/// Extract the APOP timestamp from a server greeting.
+///
+/// The timestamp can appear anywhere in the greeting as `<...>`.
+/// Returns `None` if no angle-bracket pair is found.
+fn extract_apop_timestamp(greeting: &str) -> Option<&str> {
+    let start = greeting.find('<')?;
+    let end = greeting[start..].find('>')? + start;
+    Some(&greeting[start..=end])
+}
+
+/// Compute the APOP MD5 digest: hex(md5(timestamp + password)).
+fn compute_apop_digest(timestamp: &str, password: &str) -> String {
+    let input = format!("{timestamp}{password}");
+    let digest = md5::compute(input.as_bytes());
+    format!("{:x}", digest)
+}
+
 impl Pop3Client {
     /// Connect to a POP3 server over plain TCP.
     ///
@@ -335,6 +352,71 @@ impl Pop3Client {
             })?;
 
         // Only set authenticated after both commands succeed
+        self.state = SessionState::Authenticated;
+        Ok(())
+    }
+
+    /// Authenticate with the server using the APOP command (RFC 1939 section 7).
+    ///
+    /// APOP uses an MD5 digest of the server greeting timestamp concatenated with
+    /// the password. The server must include a timestamp in its greeting
+    /// (e.g., `+OK POP3 server ready <1896.697170952@dbc.mtview.ca.us>`).
+    ///
+    /// # Security Warning
+    ///
+    /// **APOP uses MD5, which is cryptographically broken.** MD5 collision attacks
+    /// are practical and trivial. APOP provides no protection against offline
+    /// dictionary attacks if the exchanged messages are intercepted. Use only with
+    /// legacy servers where USER/PASS over TLS is unavailable. For modern servers,
+    /// prefer [`login()`](Self::login) over a TLS connection.
+    ///
+    /// # Errors
+    ///
+    /// - [`Pop3Error::ServerError`] -- server greeting has no APOP timestamp
+    /// - [`Pop3Error::AuthFailed`] -- server rejected the APOP credentials
+    /// - [`Pop3Error::NotAuthenticated`] -- called when not in Connected state
+    /// - [`Pop3Error::InvalidInput`] -- username or password contains CR or LF
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     // Server greeting must contain an APOP timestamp: <timestamp@host>
+    ///     #[allow(deprecated)]
+    ///     client.apop("user", "password").await?;
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    #[deprecated(
+        note = "APOP uses MD5 which is cryptographically broken. Prefer login() over a TLS connection."
+    )]
+    pub async fn apop(&mut self, username: &str, password: &str) -> Result<()> {
+        if self.state != SessionState::Connected {
+            return Err(Pop3Error::NotAuthenticated);
+        }
+        check_no_crlf(username)?;
+        check_no_crlf(password)?;
+
+        let timestamp = extract_apop_timestamp(&self.greeting)
+            .ok_or_else(|| {
+                Pop3Error::ServerError(
+                    "server does not support APOP (no timestamp in greeting)".to_string(),
+                )
+            })?
+            .to_string();
+
+        let digest = compute_apop_digest(&timestamp, password);
+        let cmd = format!("APOP {username} {digest}");
+        self.send_and_check(&cmd).await.map_err(|e| match e {
+            Pop3Error::ServerError(msg) => Pop3Error::AuthFailed(msg),
+            other => other,
+        })?;
+
         self.state = SessionState::Authenticated;
         Ok(())
     }
@@ -688,6 +770,16 @@ fn build_authenticated_test_client(mock: tokio_test::io::Mock) -> Pop3Client {
         transport,
         greeting: String::new(),
         state: SessionState::Authenticated,
+    }
+}
+
+#[cfg(test)]
+fn build_test_client_with_greeting(mock: tokio_test::io::Mock, greeting: &str) -> Pop3Client {
+    let transport = Transport::mock(mock);
+    Pop3Client {
+        transport,
+        greeting: greeting.to_string(),
+        state: SessionState::Connected,
     }
 }
 
@@ -1346,5 +1438,181 @@ mod tests {
             client.dele(1).await,
             Err(Pop3Error::NotAuthenticated)
         ));
+    }
+
+    // --- login() with RESP-CODES ---
+
+    #[tokio::test]
+    async fn login_with_auth_resp_code_returns_auth_failed() {
+        let mock = Builder::new()
+            .write(b"USER user\r\n")
+            .read(b"+OK\r\n")
+            .write(b"PASS wrong\r\n")
+            .read(b"-ERR [AUTH] invalid credentials\r\n")
+            .build();
+        let mut client = build_test_client(mock);
+        let result = client.login("user", "wrong").await;
+        match result.unwrap_err() {
+            Pop3Error::AuthFailed(msg) => assert_eq!(msg, "invalid credentials"),
+            other => panic!("expected AuthFailed, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn login_with_in_use_resp_code_returns_mailbox_in_use() {
+        let mock = Builder::new()
+            .write(b"USER user\r\n")
+            .read(b"+OK\r\n")
+            .write(b"PASS pass\r\n")
+            .read(b"-ERR [IN-USE] mailbox locked\r\n")
+            .build();
+        let mut client = build_test_client(mock);
+        let result = client.login("user", "pass").await;
+        match result.unwrap_err() {
+            Pop3Error::MailboxInUse(msg) => assert_eq!(msg, "mailbox locked"),
+            other => panic!("expected MailboxInUse, got: {other:?}"),
+        }
+    }
+
+    // --- APOP authentication tests ---
+
+    #[allow(deprecated)]
+    #[tokio::test]
+    async fn apop_happy_path() {
+        // RFC 1939 section 7 test vector:
+        // timestamp = <1896.697170952@dbc.mtview.ca.us>
+        // password = tanstaaf
+        // digest = c4c9334bac560ecc979e58001b3e22fb
+        let mock = Builder::new()
+            .write(b"APOP mrose c4c9334bac560ecc979e58001b3e22fb\r\n")
+            .read(b"+OK mastrstrmt mastrstrmt is strstrmt\r\n")
+            .build();
+        let mut client = build_test_client_with_greeting(
+            mock,
+            "POP3 server ready <1896.697170952@dbc.mtview.ca.us>",
+        );
+        client.apop("mrose", "tanstaaf").await.unwrap();
+        assert_eq!(client.state(), SessionState::Authenticated);
+    }
+
+    #[allow(deprecated)]
+    #[tokio::test]
+    async fn apop_no_timestamp_in_greeting() {
+        let mock = Builder::new().build();
+        let mut client = build_test_client_with_greeting(mock, "POP3 server ready");
+        let result = client.apop("user", "pass").await;
+        match result.unwrap_err() {
+            Pop3Error::ServerError(msg) => assert!(msg.contains("no timestamp")),
+            other => panic!("expected ServerError, got: {other:?}"),
+        }
+    }
+
+    #[allow(deprecated)]
+    #[tokio::test]
+    async fn apop_server_rejects_returns_auth_failed() {
+        let mock = Builder::new()
+            .write(b"APOP user c4c9334bac560ecc979e58001b3e22fb\r\n")
+            .read(b"-ERR permission denied\r\n")
+            .build();
+        let mut client =
+            build_test_client_with_greeting(mock, "ready <1896.697170952@dbc.mtview.ca.us>");
+        let result = client.apop("user", "tanstaaf").await;
+        match result.unwrap_err() {
+            Pop3Error::AuthFailed(msg) => assert!(msg.contains("permission denied")),
+            other => panic!("expected AuthFailed, got: {other:?}"),
+        }
+        assert_eq!(client.state(), SessionState::Connected);
+    }
+
+    #[allow(deprecated)]
+    #[tokio::test]
+    async fn apop_with_auth_resp_code_returns_auth_failed() {
+        let mock = Builder::new()
+            .write(b"APOP user c4c9334bac560ecc979e58001b3e22fb\r\n")
+            .read(b"-ERR [AUTH] invalid credentials\r\n")
+            .build();
+        let mut client =
+            build_test_client_with_greeting(mock, "ready <1896.697170952@dbc.mtview.ca.us>");
+        let result = client.apop("user", "tanstaaf").await;
+        match result.unwrap_err() {
+            Pop3Error::AuthFailed(msg) => assert_eq!(msg, "invalid credentials"),
+            other => panic!("expected AuthFailed, got: {other:?}"),
+        }
+    }
+
+    #[allow(deprecated)]
+    #[tokio::test]
+    async fn apop_with_in_use_resp_code_does_not_promote() {
+        let mock = Builder::new()
+            .write(b"APOP user c4c9334bac560ecc979e58001b3e22fb\r\n")
+            .read(b"-ERR [IN-USE] mailbox locked\r\n")
+            .build();
+        let mut client =
+            build_test_client_with_greeting(mock, "ready <1896.697170952@dbc.mtview.ca.us>");
+        let result = client.apop("user", "tanstaaf").await;
+        match result.unwrap_err() {
+            Pop3Error::MailboxInUse(msg) => assert_eq!(msg, "mailbox locked"),
+            other => panic!("expected MailboxInUse, got: {other:?}"),
+        }
+    }
+
+    #[allow(deprecated)]
+    #[tokio::test]
+    async fn apop_rejects_when_already_authenticated() {
+        let mock = Builder::new().build();
+        let mut client = build_authenticated_test_client(mock);
+        let result = client.apop("user", "pass").await;
+        assert!(matches!(result, Err(Pop3Error::NotAuthenticated)));
+    }
+
+    #[allow(deprecated)]
+    #[tokio::test]
+    async fn apop_rejects_crlf_in_username() {
+        let mock = Builder::new().build();
+        let mut client = build_test_client_with_greeting(mock, "ready <timestamp@host>");
+        let result = client.apop("user\r\n", "pass").await;
+        assert!(matches!(result.unwrap_err(), Pop3Error::InvalidInput));
+    }
+
+    #[allow(deprecated)]
+    #[tokio::test]
+    async fn apop_rejects_crlf_in_password() {
+        let mock = Builder::new().build();
+        let mut client = build_test_client_with_greeting(mock, "ready <timestamp@host>");
+        let result = client.apop("user", "pass\r\n").await;
+        assert!(matches!(result.unwrap_err(), Pop3Error::InvalidInput));
+    }
+
+    #[test]
+    fn extract_apop_timestamp_from_greeting() {
+        assert_eq!(
+            extract_apop_timestamp("POP3 server ready <1896.697170952@dbc.mtview.ca.us>"),
+            Some("<1896.697170952@dbc.mtview.ca.us>")
+        );
+    }
+
+    #[test]
+    fn extract_apop_timestamp_at_beginning() {
+        assert_eq!(
+            extract_apop_timestamp("<ts@host> POP3 ready"),
+            Some("<ts@host>")
+        );
+    }
+
+    #[test]
+    fn extract_apop_timestamp_missing() {
+        assert_eq!(extract_apop_timestamp("POP3 server ready"), None);
+    }
+
+    #[test]
+    fn extract_apop_timestamp_no_close_bracket() {
+        assert_eq!(extract_apop_timestamp("POP3 <broken"), None);
+    }
+
+    #[test]
+    fn compute_apop_digest_rfc_vector() {
+        // RFC 1939 section 7 test vector
+        let digest = compute_apop_digest("<1896.697170952@dbc.mtview.ca.us>", "tanstaaf");
+        assert_eq!(digest, "c4c9334bac560ecc979e58001b3e22fb");
     }
 }
