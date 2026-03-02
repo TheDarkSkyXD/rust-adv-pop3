@@ -86,7 +86,9 @@ Decimal phases appear between their surrounding integers in numeric order.
   1. A caller can authenticate using `Pop3ClientBuilder` with a fluent API — no direct TLS feature flag handling required in application code
   2. APOP authentication works and its rustdoc prominently documents the MD5 security caveat
   3. Server RESP-CODES (`[IN-USE]`, `[LOGIN-DELAY]`, etc.) are parsed into named `Pop3Error` enum variants rather than generic string errors
-**Plans**: TBD
+**Plans:** 1/2 plans complete
+- [x] 04-01-PLAN.md — RESP-CODE parsing (MailboxInUse, LoginDelay, SysTemp, SysPerm variants), APOP auth with MD5, #[deprecated] + security warning (CMD-03, CMD-04)
+- [ ] 04-02-PLAN.md — Builder pattern API (API-01, API-02)
 
 ### Phase 5: Pipelining
 **Goal**: Callers can send batches of POP3 commands without waiting for individual responses, unlocking high-throughput mail processing while automatically falling back to sequential mode on servers that do not support pipelining
@@ -151,7 +153,7 @@ v3.0 phases execute in order: 5 → 6 → 7 → 8 → 9 (Phase 6 can run in para
 | 1. Foundation | 2/2 | Complete | 2026-03-01 |
 | 2. Async Core | 4/4 | Complete (verified) | 2026-03-01 |
 | 3. TLS and Publish | 4/4 | Complete   | 2026-03-01 |
-| 4. Protocol Extensions | 0/? | Not started | - |
+| 4. Protocol Extensions | 1/2 | In Progress | - |
 | 5. Pipelining | 0/? | Not started | - |
 | 6. UIDL Caching | 0/? | Not started | - |
 | 7. Reconnection | 0/? | Not started | - |

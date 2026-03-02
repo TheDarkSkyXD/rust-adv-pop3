@@ -2,26 +2,13 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: milestone
-status: unknown
-last_updated: "2026-03-01T22:38:44.496Z"
-progress:
-  total_phases: 3
-  completed_phases: 3
-  total_plans: 10
-  completed_plans: 10
----
-
----
-gsd_state_version: 1.0
-milestone: v2.0
-milestone_name: milestone
 status: in_progress
-last_updated: "2026-03-01T23:30:00.000Z"
+last_updated: "2026-03-01T23:59:00.000Z"
 progress:
   total_phases: 9
   completed_phases: 3
   total_plans: 13
-  completed_plans: 10
+  completed_plans: 11
 ---
 
 # Project State
@@ -31,16 +18,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-01)
 
 **Core value:** Provide a correct, async, production-quality POP3 client that handles errors gracefully instead of panicking
-**Current focus:** Phase 3 complete — TLS and Publish (all 4 plans done). Ready for Phase 4.
+**Current focus:** Phase 4 (Protocol Extensions) in progress — 04-01 complete, ready for 04-02 (builder API).
 
 ## Current Position
 
-Phase: 3 of 9 (TLS and Publish) — COMPLETE
-Plan: 4 of 4 in current phase (just completed)
-Status: Phase 3 complete — rustdoc on all public items, CI matrix for dual TLS backends, TLS examples, README, Cargo.toml publish-ready. cargo publish --dry-run passes.
-Last activity: 2026-03-01 — Completed 03-04 (comprehensive rustdoc, CI matrix, examples/tls.rs, examples/starttls.rs, README.md rewrite, Cargo.toml metadata update)
+Phase: 4 of 9 (Protocol Extensions) — IN PROGRESS
+Plan: 1 of 2 in current phase (just completed 04-01)
+Status: 04-01 complete — RESP-CODE parsing (MailboxInUse, LoginDelay, SysTemp, SysPerm variants), APOP auth with MD5 digest and #[deprecated], 88 unit + 2 integration + 20 doc tests passing.
+Last activity: 2026-03-01 — Completed 04-01 (RESP-CODES parsing, APOP authentication, md5 dependency)
 
-Progress: [███░░░░░░░] 33%
+Progress: [████░░░░░░] 38%
 
 ## Performance Metrics
 
@@ -56,10 +43,11 @@ Progress: [███░░░░░░░] 33%
 | 01-foundation | 2 | 40 min | 20 min |
 | 02-async-core | 4 | ~40 min | ~10 min |
 | 03-tls-and-publish | 4 completed | ~60 min | ~15 min |
+| 04-protocol-extensions | 1 of 2 completed | ~4 min | ~4 min |
 
 **Recent Trend:**
-- Last 5 plans: ~4 min, 4 min, ~7 min, ~8 min, ~45 min
-- Trend: Plan 04 was longer due to context window continuation and comprehensive documentation work
+- Last 5 plans: 4 min, ~7 min, ~8 min, ~45 min, ~4 min
+- Trend: 04-01 was fast — well-specified plan, no blockers, RFC test vector matched on first attempt
 
 *Updated after each plan completion*
 
@@ -112,6 +100,12 @@ Recent decisions affecting current work:
 - [Phase 03-04]: no_run for all network doctests — compile-verified without requiring a real POP3 server in CI
 - [Phase 03-04]: CI matrix tests rustls-tls and openssl-tls independently, plus plain no-TLS build
 - [Phase 03-04]: Repository URL updated to TheDarkSkyXD fork; readme field added to Cargo.toml for crates.io
+- [04-01]: parse_resp_code() strips bracket code, keeps text after ] — consistent with ServerError stripping -ERR
+- [04-01]: [AUTH] RESP-CODE maps to AuthFailed (not a new variant) — merges into existing semantic error
+- [04-01]: Unknown RESP-CODEs fall through to ServerError with full text preserved
+- [04-01]: apop() returns ServerError immediately if no timestamp in greeting — no silent fallback
+- [04-01]: apop() map_err promotes ServerError->AuthFailed; RESP-CODE variants pass through unchanged
+- [04-01]: apop() deprecated with note referencing login() as the preferred alternative
 
 ### Pending Todos
 
@@ -131,5 +125,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed 03-04-PLAN.md — comprehensive rustdoc on all public items, CI matrix for rustls-tls and openssl-tls backends, examples/tls.rs and examples/starttls.rs, README.md rewrite (async v2 API), Cargo.toml publish prep. All 90 tests pass (66 unit + 2 integration + 22 doc). cargo publish --dry-run passes. Phase 3 (TLS and Publish) is COMPLETE. Ready for Phase 4 planning.
+Stopped at: Completed 04-01-PLAN.md — RESP-CODE parsing (4 new Pop3Error variants: MailboxInUse, LoginDelay, SysTemp, SysPerm), parse_resp_code() helper, APOP authentication with MD5 digest and #[deprecated] + security warning rustdoc. md5 = "0.7" added. 88 unit + 2 integration + 20 doc tests passing. cargo clippy and fmt clean. Ready for 04-02 (builder API).
 Resume file: None
