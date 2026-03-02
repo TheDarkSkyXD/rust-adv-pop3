@@ -29,6 +29,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 8: Connection Pooling** - bb8-backed connection pool for multi-account concurrent access (completed 2026-03-02)
 - [x] **Phase 9: MIME Integration** - Optional MIME parsing via mail-parser behind a feature flag (completed 2026-03-02)
 
+**Gap Closure:**
+- [ ] **Phase 10: Tech Debt Cleanup** - Pool double-login guard, stale dead_code removal, ROADMAP checkbox fix (gap closure from audit)
+
 ## Phase Details
 
 ### Phase 1: Foundation
@@ -124,8 +127,8 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. After a reconnect, the caller receives an explicit signal that session state (including any pending DELE marks) has been lost — the API does not silently discard this information
   4. Consecutive reconnection attempts use increasing wait intervals with random jitter — two concurrent clients do not produce synchronized retry storms
 **Plans:** 2/2 plans complete
-- [ ] 07-01-PLAN.md — backon dependency, SessionReset ZST, ReconnectingClientBuilder, ReconnectingClient struct + retry infrastructure (RECON-01, RECON-02, RECON-04)
-- [ ] 07-02-PLAN.md — All delegating command methods, lib.rs re-exports, tests covering all four RECON requirements (RECON-01, RECON-02, RECON-03, RECON-04)
+- [x] 07-01-PLAN.md — backon dependency, SessionReset ZST, ReconnectingClientBuilder, ReconnectingClient struct + retry infrastructure (RECON-01, RECON-02, RECON-04)
+- [x] 07-02-PLAN.md — All delegating command methods, lib.rs re-exports, tests covering all four RECON requirements (RECON-01, RECON-02, RECON-03, RECON-04)
 
 ### Phase 8: Connection Pooling
 **Goal**: Callers can manage multiple POP3 accounts concurrently using a pool that enforces the RFC 1939 exclusive-lock constraint at the type level and in documentation
@@ -146,6 +149,17 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. The `mime` feature flag is opt-in — projects that do not activate it compile with no dependency on `mail-parser` and no increase in binary size
 **Plans**: TBD
 
+### Phase 10: Tech Debt Cleanup
+**Goal**: Close all advisory gaps and tech debt items identified by the v2.0+v3.0 milestone audit — pool double-login guard, stale dead_code annotations, and ROADMAP checkbox consistency
+**Depends on**: Phase 9 (gap closure phase — runs after all feature phases)
+**Requirements**: None (no unsatisfied requirements — this phase addresses integration gaps and tech debt only)
+**Gap Closure:** Closes POOL-DOUBLE-LOGIN integration gap from audit
+**Success Criteria** (what must be TRUE):
+  1. `Pop3ConnectionManager::connect()` checks whether the client is already authenticated after `builder.connect()` and skips `login()` if so — preventing the double-login trap
+  2. All `#[allow(dead_code)]` annotations in `transport.rs` are removed for functions that are now called (`upgrade_in_place`, `tls_handshake` helpers)
+  3. ROADMAP.md Phase 7 plan checkboxes are checked (already done in this update)
+**Plans**: TBD
+
 ## Progress
 
 **Execution Order:**
@@ -163,3 +177,4 @@ v3.0 phases execute in order: 5 → 6 → 7 → 8 → 9 (Phase 6 can run in para
 | 7. Reconnection | 2/2 | Complete   | 2026-03-02 |
 | 8. Connection Pooling | 2/2 | Complete   | 2026-03-02 |
 | 9. MIME Integration | 1/1 | Complete   | 2026-03-02 |
+| 10. Tech Debt Cleanup | 0/1 | Pending | — |
