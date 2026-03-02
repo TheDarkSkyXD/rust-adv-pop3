@@ -488,6 +488,7 @@ mod tests {
 
     mod manager_tests {
         use super::*;
+        use bb8::ManageConnection;
         use tokio_test::io::Builder;
 
         fn make_manager() -> Pop3ConnectionManager {
