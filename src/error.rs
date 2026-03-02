@@ -23,6 +23,23 @@ pub enum Pop3Error {
     #[error("invalid DNS name: {0}")]
     InvalidDnsName(String),
 
+    /// Mailbox is locked by another POP3 session (RESP-CODE: `[IN-USE]`).
+    /// Retry after the other session ends.
+    #[error("mailbox in use: {0}")]
+    MailboxInUse(String),
+
+    /// Authentication attempted too soon after last login (RESP-CODE: `[LOGIN-DELAY]`).
+    #[error("login delay: {0}")]
+    LoginDelay(String),
+
+    /// Temporary system error -- likely transient (RESP-CODE: `[SYS/TEMP]`).
+    #[error("temporary system error: {0}")]
+    SysTemp(String),
+
+    /// Permanent system error -- requires manual intervention (RESP-CODE: `[SYS/PERM]`).
+    #[error("permanent system error: {0}")]
+    SysPerm(String),
+
     /// The server returned a `-ERR` response to a command.
     ///
     /// The inner `String` contains the server error message. This variant is

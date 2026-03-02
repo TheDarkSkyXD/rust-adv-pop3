@@ -1,6 +1,27 @@
 use crate::error::{Pop3Error, Result};
 use crate::types::{Capability, ListEntry, Stat, UidlEntry};
 
+/// Map a `-ERR` response text with an optional RESP-CODE bracket prefix to a
+/// typed `Pop3Error` variant. If no bracket code is found or the code is
+/// unrecognized, falls through to `ServerError`.
+fn parse_resp_code(text: &str) -> Pop3Error {
+    if let Some(inner) = text.strip_prefix('[') {
+        if let Some(end) = inner.find(']') {
+            let code = &inner[..end];
+            let rest = inner[end + 1..].trim_start().to_string();
+            return match code {
+                "IN-USE" => Pop3Error::MailboxInUse(rest),
+                "LOGIN-DELAY" => Pop3Error::LoginDelay(rest),
+                "SYS/TEMP" => Pop3Error::SysTemp(rest),
+                "SYS/PERM" => Pop3Error::SysPerm(rest),
+                "AUTH" => Pop3Error::AuthFailed(rest),
+                _ => Pop3Error::ServerError(text.to_string()),
+            };
+        }
+    }
+    Pop3Error::ServerError(text.to_string())
+}
+
 /// Parse a POP3 status line, returning the text after `+OK` or an error for `-ERR`.
 pub(crate) fn parse_status_line(line: &str) -> Result<&str> {
     let line = line.trim_end_matches("\r\n").trim_end_matches('\n');
@@ -9,7 +30,8 @@ pub(crate) fn parse_status_line(line: &str) -> Result<&str> {
     } else if line.starts_with("-ERR")
         && (line.len() == 4 || line.as_bytes()[4].is_ascii_whitespace())
     {
-        Err(Pop3Error::ServerError(line[4..].trim_start().to_string()))
+        let text = line[4..].trim_start();
+        Err(parse_resp_code(text))
     } else {
         Err(Pop3Error::Parse(format!("unexpected response: {line}")))
     }
@@ -292,5 +314,69 @@ mod tests {
 
         let err = Pop3Error::InvalidInput;
         assert_eq!(err.to_string(), "invalid input: CRLF injection detected");
+    }
+
+    #[test]
+    fn test_parse_status_resp_code_in_use() {
+        let result = parse_status_line("-ERR [IN-USE] mailbox locked by another session\r\n");
+        match result.unwrap_err() {
+            Pop3Error::MailboxInUse(msg) => assert_eq!(msg, "mailbox locked by another session"),
+            e => panic!("expected MailboxInUse, got: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_status_resp_code_login_delay() {
+        let result = parse_status_line("-ERR [LOGIN-DELAY] try again in 60 seconds\r\n");
+        match result.unwrap_err() {
+            Pop3Error::LoginDelay(msg) => assert_eq!(msg, "try again in 60 seconds"),
+            e => panic!("expected LoginDelay, got: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_status_resp_code_sys_temp() {
+        let result = parse_status_line("-ERR [SYS/TEMP] disk full\r\n");
+        match result.unwrap_err() {
+            Pop3Error::SysTemp(msg) => assert_eq!(msg, "disk full"),
+            e => panic!("expected SysTemp, got: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_status_resp_code_sys_perm() {
+        let result = parse_status_line("-ERR [SYS/PERM] user account disabled\r\n");
+        match result.unwrap_err() {
+            Pop3Error::SysPerm(msg) => assert_eq!(msg, "user account disabled"),
+            e => panic!("expected SysPerm, got: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_status_resp_code_auth() {
+        let result = parse_status_line("-ERR [AUTH] invalid credentials\r\n");
+        match result.unwrap_err() {
+            Pop3Error::AuthFailed(msg) => assert_eq!(msg, "invalid credentials"),
+            e => panic!("expected AuthFailed, got: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_status_resp_code_unknown_falls_through() {
+        let result = parse_status_line("-ERR [UNKNOWN-CODE] something happened\r\n");
+        match result.unwrap_err() {
+            Pop3Error::ServerError(msg) => assert_eq!(msg, "[UNKNOWN-CODE] something happened"),
+            e => panic!("expected ServerError, got: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_status_plain_err_still_works() {
+        // Plain -ERR without RESP-CODE should still return ServerError
+        let result = parse_status_line("-ERR bad command\r\n");
+        match result.unwrap_err() {
+            Pop3Error::ServerError(msg) => assert_eq!(msg, "bad command"),
+            e => panic!("expected ServerError, got: {e:?}"),
+        }
     }
 }

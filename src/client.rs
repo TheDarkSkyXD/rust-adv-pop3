@@ -1347,4 +1347,38 @@ mod tests {
             Err(Pop3Error::NotAuthenticated)
         ));
     }
+
+    // --- login() with RESP-CODES ---
+
+    #[tokio::test]
+    async fn login_with_auth_resp_code_returns_auth_failed() {
+        let mock = Builder::new()
+            .write(b"USER user\r\n")
+            .read(b"+OK\r\n")
+            .write(b"PASS wrong\r\n")
+            .read(b"-ERR [AUTH] invalid credentials\r\n")
+            .build();
+        let mut client = build_test_client(mock);
+        let result = client.login("user", "wrong").await;
+        match result.unwrap_err() {
+            Pop3Error::AuthFailed(msg) => assert_eq!(msg, "invalid credentials"),
+            other => panic!("expected AuthFailed, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn login_with_in_use_resp_code_returns_mailbox_in_use() {
+        let mock = Builder::new()
+            .write(b"USER user\r\n")
+            .read(b"+OK\r\n")
+            .write(b"PASS pass\r\n")
+            .read(b"-ERR [IN-USE] mailbox locked\r\n")
+            .build();
+        let mut client = build_test_client(mock);
+        let result = client.login("user", "pass").await;
+        match result.unwrap_err() {
+            Pop3Error::MailboxInUse(msg) => assert_eq!(msg, "mailbox locked"),
+            other => panic!("expected MailboxInUse, got: {other:?}"),
+        }
+    }
 }
