@@ -51,10 +51,12 @@
 //! }
 //! ```
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use backon::{ExponentialBuilder, Retryable};
 
+use crate::types::{Capability, ListEntry, Message, SessionState, Stat, UidlEntry};
 use crate::{Pop3Client, Pop3ClientBuilder, Pop3Error, Result};
 
 /// Type alias for the optional reconnect callback to reduce type-complexity.
@@ -242,7 +244,6 @@ impl ReconnectingClientBuilder {
 /// returns `Result<Outcome<T>>` so callers can detect session-state loss.
 ///
 /// See the [module-level documentation](self) for details.
-#[allow(dead_code)] // fields are used in Plan 02 command wrappers
 pub struct ReconnectingClient {
     builder: Pop3ClientBuilder,
     username: String,
@@ -259,9 +260,8 @@ pub struct ReconnectingClient {
 impl ReconnectingClient {
     /// Rebuild `self.client` by connecting and authenticating from scratch.
     ///
-    /// Used internally by command wrappers (Plan 02) when a transient error
-    /// is detected on the active connection.
-    #[allow(dead_code)] // used in Plan 02 command wrappers
+    /// Used internally by command wrappers when a transient error is detected
+    /// on the active connection.
     pub(crate) async fn do_reconnect(&mut self) -> Result<()> {
         let exp = build_exp_backoff(
             self.max_retries,
@@ -298,11 +298,346 @@ impl ReconnectingClient {
         Ok(())
     }
 
-    /// Quit the underlying POP3 session, committing DELE marks and disconnecting.
+    // -------------------------------------------------------------------------
+    // Mailbox commands — all return Result<Outcome<T>>
+    // -------------------------------------------------------------------------
+
+    /// Get mailbox statistics: total message count and total size in bytes.
     ///
-    /// This consumes `self` so the client cannot be used after quitting.
+    /// Returns `Outcome::Reconnected(stat)` if the connection was dropped and
+    /// re-established before this call returned. In that case, all pending
+    /// DELE marks have been discarded.
+    pub async fn stat(&mut self) -> Result<Outcome<Stat>> {
+        match self.client.stat().await {
+            Ok(v) => Ok(Outcome::Fresh(v)),
+            Err(e) if is_retryable(&e) => {
+                self.do_reconnect().await?;
+                let v = self.client.stat().await?;
+                Ok(Outcome::Reconnected(v))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// List messages with their sizes.
+    ///
+    /// - `Some(id)` — returns size info for the single message with that number
+    /// - `None` — returns a list of all messages with their sizes
+    ///
+    /// Returns `Outcome::Reconnected(list)` if the connection was dropped and
+    /// re-established before this call returned. In that case, all pending
+    /// DELE marks have been discarded.
+    pub async fn list(&mut self, message_id: Option<u32>) -> Result<Outcome<Vec<ListEntry>>> {
+        match self.client.list(message_id).await {
+            Ok(v) => Ok(Outcome::Fresh(v)),
+            Err(e) if is_retryable(&e) => {
+                self.do_reconnect().await?;
+                let v = self.client.list(message_id).await?;
+                Ok(Outcome::Reconnected(v))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Get unique IDs (UIDs) for messages.
+    ///
+    /// - `Some(id)` — returns the UID for the single message with that number
+    /// - `None` — returns UIDs for all messages
+    ///
+    /// Returns `Outcome::Reconnected(uids)` if the connection was dropped and
+    /// re-established before this call returned. In that case, all pending
+    /// DELE marks have been discarded.
+    pub async fn uidl(&mut self, message_id: Option<u32>) -> Result<Outcome<Vec<UidlEntry>>> {
+        match self.client.uidl(message_id).await {
+            Ok(v) => Ok(Outcome::Fresh(v)),
+            Err(e) if is_retryable(&e) => {
+                self.do_reconnect().await?;
+                let v = self.client.uidl(message_id).await?;
+                Ok(Outcome::Reconnected(v))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Retrieve the full text of message `id`.
+    ///
+    /// Returns `Outcome::Reconnected(msg)` if the connection was dropped and
+    /// re-established before this call returned. In that case, all pending
+    /// DELE marks have been discarded.
+    pub async fn retr(&mut self, id: u32) -> Result<Outcome<Message>> {
+        match self.client.retr(id).await {
+            Ok(v) => Ok(Outcome::Fresh(v)),
+            Err(e) if is_retryable(&e) => {
+                self.do_reconnect().await?;
+                let v = self.client.retr(id).await?;
+                Ok(Outcome::Reconnected(v))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Mark message `id` for deletion.
+    ///
+    /// The deletion is committed only on [`quit()`](Self::quit).
+    ///
+    /// Returns `Outcome::Reconnected(())` if the connection was dropped and
+    /// re-established before this call returned. In that case, all pending
+    /// DELE marks have been discarded — including this one.
+    pub async fn dele(&mut self, id: u32) -> Result<Outcome<()>> {
+        match self.client.dele(id).await {
+            Ok(()) => Ok(Outcome::Fresh(())),
+            Err(e) if is_retryable(&e) => {
+                self.do_reconnect().await?;
+                self.client.dele(id).await?;
+                Ok(Outcome::Reconnected(()))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Reset the session, unmarking all messages that were marked for deletion.
+    ///
+    /// Returns `Outcome::Reconnected(())` if the connection was dropped and
+    /// re-established before this call returned. In that case, all pending
+    /// DELE marks have been discarded.
+    pub async fn rset(&mut self) -> Result<Outcome<()>> {
+        match self.client.rset().await {
+            Ok(()) => Ok(Outcome::Fresh(())),
+            Err(e) if is_retryable(&e) => {
+                self.do_reconnect().await?;
+                self.client.rset().await?;
+                Ok(Outcome::Reconnected(()))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Send a no-op command to keep the connection alive.
+    ///
+    /// Returns `Outcome::Reconnected(())` if the connection was dropped and
+    /// re-established before this call returned. In that case, all pending
+    /// DELE marks have been discarded.
+    pub async fn noop(&mut self) -> Result<Outcome<()>> {
+        match self.client.noop().await {
+            Ok(()) => Ok(Outcome::Fresh(())),
+            Err(e) if is_retryable(&e) => {
+                self.do_reconnect().await?;
+                self.client.noop().await?;
+                Ok(Outcome::Reconnected(()))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Retrieve the headers and the first `lines` lines of message `id`.
+    ///
+    /// Returns `Outcome::Reconnected(msg)` if the connection was dropped and
+    /// re-established before this call returned. In that case, all pending
+    /// DELE marks have been discarded.
+    pub async fn top(&mut self, id: u32, lines: u32) -> Result<Outcome<Message>> {
+        match self.client.top(id, lines).await {
+            Ok(v) => Ok(Outcome::Fresh(v)),
+            Err(e) if is_retryable(&e) => {
+                self.do_reconnect().await?;
+                let v = self.client.top(id, lines).await?;
+                Ok(Outcome::Reconnected(v))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Query the server for its supported capabilities (RFC 2449).
+    ///
+    /// Returns `Outcome::Reconnected(caps)` if the connection was dropped and
+    /// re-established before this call returned. In that case, all pending
+    /// DELE marks have been discarded.
+    pub async fn capa(&mut self) -> Result<Outcome<Vec<Capability>>> {
+        match self.client.capa().await {
+            Ok(v) => Ok(Outcome::Fresh(v)),
+            Err(e) if is_retryable(&e) => {
+                self.do_reconnect().await?;
+                let v = self.client.capa().await?;
+                Ok(Outcome::Reconnected(v))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Retrieve multiple messages by their message numbers.
+    ///
+    /// Returns a `Vec` with one `Result<Message>` per input ID. Each result
+    /// is independently `Ok` or `Err`.
+    ///
+    /// Returns `Outcome::Reconnected(results)` if the connection was dropped and
+    /// re-established before this call returned. In that case, all pending
+    /// DELE marks have been discarded.
+    pub async fn retr_many(&mut self, ids: &[u32]) -> Result<Outcome<Vec<Result<Message>>>> {
+        match self.client.retr_many(ids).await {
+            Ok(v) => Ok(Outcome::Fresh(v)),
+            Err(e) if is_retryable(&e) => {
+                self.do_reconnect().await?;
+                let v = self.client.retr_many(ids).await?;
+                Ok(Outcome::Reconnected(v))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Mark multiple messages for deletion.
+    ///
+    /// Returns a `Vec` with one `Result<()>` per input ID. Each result is
+    /// independently `Ok` or `Err`.
+    ///
+    /// Returns `Outcome::Reconnected(results)` if the connection was dropped and
+    /// re-established before this call returned. In that case, all pending
+    /// DELE marks have been discarded — including any that were just applied.
+    pub async fn dele_many(&mut self, ids: &[u32]) -> Result<Outcome<Vec<Result<()>>>> {
+        match self.client.dele_many(ids).await {
+            Ok(v) => Ok(Outcome::Fresh(v)),
+            Err(e) if is_retryable(&e) => {
+                self.do_reconnect().await?;
+                let v = self.client.dele_many(ids).await?;
+                Ok(Outcome::Reconnected(v))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Return UIDL entries for messages not in `seen`.
+    ///
+    /// Returns `Outcome::Reconnected(entries)` if the connection was dropped and
+    /// re-established before this call returned. In that case, all pending
+    /// DELE marks have been discarded.
+    pub async fn unseen_uids(
+        &mut self,
+        seen: &HashSet<String>,
+    ) -> Result<Outcome<Vec<UidlEntry>>> {
+        match self.client.unseen_uids(seen).await {
+            Ok(v) => Ok(Outcome::Fresh(v)),
+            Err(e) if is_retryable(&e) => {
+                self.do_reconnect().await?;
+                let v = self.client.unseen_uids(seen).await?;
+                Ok(Outcome::Reconnected(v))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Fetch full message content for messages not in `seen`.
+    ///
+    /// Returns `Outcome::Reconnected(results)` if the connection was dropped and
+    /// re-established before this call returned. In that case, all pending
+    /// DELE marks have been discarded.
+    pub async fn fetch_unseen(
+        &mut self,
+        seen: &HashSet<String>,
+    ) -> Result<Outcome<Vec<(UidlEntry, Message)>>> {
+        match self.client.fetch_unseen(seen).await {
+            Ok(v) => Ok(Outcome::Fresh(v)),
+            Err(e) if is_retryable(&e) => {
+                self.do_reconnect().await?;
+                let v = self.client.fetch_unseen(seen).await?;
+                Ok(Outcome::Reconnected(v))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Remove UIDs from `seen` that no longer exist on the server.
+    ///
+    /// Returns `Outcome::Reconnected(pruned)` if the connection was dropped and
+    /// re-established before this call returned. In that case, all pending
+    /// DELE marks have been discarded.
+    pub async fn prune_seen(
+        &mut self,
+        seen: &mut HashSet<String>,
+    ) -> Result<Outcome<Vec<String>>> {
+        match self.client.prune_seen(seen).await {
+            Ok(v) => Ok(Outcome::Fresh(v)),
+            Err(e) if is_retryable(&e) => {
+                self.do_reconnect().await?;
+                let v = self.client.prune_seen(seen).await?;
+                Ok(Outcome::Reconnected(v))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Session management
+    // -------------------------------------------------------------------------
+
+    /// End the session, committing any pending deletions.
+    ///
+    /// This method consumes `self`, providing a compile-time guarantee that no
+    /// further commands can be issued after the session ends.
+    ///
+    /// If the connection is already dead (transient I/O error on QUIT), the
+    /// error is silently ignored — a best-effort disconnect. Non-transient
+    /// errors are propagated.
     pub async fn quit(self) -> Result<()> {
-        self.client.quit().await
+        match self.client.quit().await {
+            Ok(()) => Ok(()),
+            Err(e) if is_retryable(&e) => Ok(()), // best-effort QUIT; connection already dead
+            Err(e) => Err(e),
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Non-async read-only accessors
+    // -------------------------------------------------------------------------
+
+    /// Returns the server greeting message received on connection.
+    pub fn greeting(&self) -> &str {
+        self.client.greeting()
+    }
+
+    /// Returns the current session state.
+    pub fn state(&self) -> SessionState {
+        self.client.state()
+    }
+
+    /// Returns `true` if the connection is currently encrypted via TLS.
+    pub fn is_encrypted(&self) -> bool {
+        self.client.is_encrypted()
+    }
+
+    /// Returns `true` if the connection is known to be closed.
+    pub fn is_closed(&self) -> bool {
+        self.client.is_closed()
+    }
+
+    /// Returns `true` if the server advertised the `PIPELINING` capability.
+    pub fn supports_pipelining(&self) -> bool {
+        self.client.supports_pipelining()
+    }
+
+    // -------------------------------------------------------------------------
+    // Test-only constructor
+    // -------------------------------------------------------------------------
+
+    /// Construct a `ReconnectingClient` from an already-connected `Pop3Client`.
+    ///
+    /// This is used in tests to inject a mock `Pop3Client` directly without
+    /// going through the real connection and authentication flow.
+    #[cfg(test)]
+    pub(crate) fn new_for_test(
+        client: Pop3Client,
+        builder: Pop3ClientBuilder,
+        username: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Self {
+        Self {
+            client,
+            builder,
+            username: username.into(),
+            password: password.into(),
+            max_retries: 3,
+            initial_delay: Duration::from_millis(0), // zero delay for tests
+            max_delay: Duration::from_millis(0),
+            jitter: false, // deterministic for tests
+            on_reconnect: None,
+        }
     }
 }
 
