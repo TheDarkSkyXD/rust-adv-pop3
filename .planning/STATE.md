@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-03-02T02:47:23.923Z"
+last_updated: "2026-03-02T03:15:23.777Z"
 progress:
   total_phases: 9
   completed_phases: 7
-  total_plans: 17
-  completed_plans: 17
+  total_plans: 19
+  completed_plans: 18
 ---
 
 ---
@@ -120,6 +120,7 @@ Progress: [████████░░] 78%
 *Updated after each plan completion*
 | Phase 06 P01 | 3 | 2 tasks | 1 files |
 | Phase 07-reconnection P01 | 3 | 2 tasks | 3 files |
+| Phase 08 P01 | 3 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -198,6 +199,9 @@ Recent decisions affecting current work:
 - [Phase 07-02]: pub(crate) build_authenticated_mock_client added to client.rs — cleanest way to share mock construction across modules without exposing private Pop3Client struct fields
 - [Phase 07-02]: Full reconnect round-trip tests deferred to integration tests — do_reconnect() calls Pop3ClientBuilder::connect() requiring real TCP, not unit-testable
 - [Phase 07-02]: Best-effort quit silently swallows retryable errors — only non-transient errors propagate from ReconnectingClient::quit()
+- [Phase 08]: Pop3PoolError is standalone in pool.rs (not added to Pop3Error) — respects pool feature flag boundary
+- [Phase 08]: Builder hostname()/username() accessors gated with #[cfg(feature = pool)] to suppress dead_code warnings in base builds
+- [Phase 08]: get() uses get_owned() returning PooledConnection<'static, M> — Arc keeps pool alive after RwLock guard drops
 
 ### Pending Todos
 

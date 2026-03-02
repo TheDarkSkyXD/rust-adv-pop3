@@ -161,5 +161,5 @@ v3.0 phases execute in order: 5 → 6 → 7 → 8 → 9 (Phase 6 can run in para
 | 5. Pipelining | 2/2 | Complete | 2026-03-02 |
 | 6. UIDL Caching | 1/1 | Complete   | 2026-03-02 |
 | 7. Reconnection | 2/2 | Complete   | 2026-03-02 |
-| 8. Connection Pooling | 0/? | Not started | - |
+| 8. Connection Pooling | 1/2 | In Progress|  |
 | 9. MIME Integration | 0/? | Not started | - |
