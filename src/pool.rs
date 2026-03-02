@@ -48,6 +48,14 @@ impl AccountKey {
     }
 }
 
+impl std::fmt::Display for AccountKey {
+    /// Display only the host and port, redacting the username to prevent
+    /// credential leaks in logs and error messages.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.host, self.port)
+    }
+}
+
 /// Manages POP3 client connections for a single account via bb8.
 ///
 /// Each manager stores a cloned [`Pop3ClientBuilder`] and credentials.
@@ -83,6 +91,15 @@ impl bb8::ManageConnection for Pop3ConnectionManager {
         let username = self.username.clone();
         let password = self.password.clone();
         async move {
+            // Defense-in-depth: reject CRLF before opening a TCP connection.
+            // login() also validates, but this avoids wasting a connection attempt.
+            if username.contains('\r')
+                || username.contains('\n')
+                || password.contains('\r')
+                || password.contains('\n')
+            {
+                return Err(Pop3Error::InvalidInput);
+            }
             let mut client = builder.connect().await?;
             client.login(&username, &password).await?;
             Ok(client)
@@ -114,7 +131,7 @@ pub enum Pop3PoolError {
     #[error("pool connection error: {0}")]
     Connection(#[source] Pop3Error),
     /// The requested account has not been registered with the pool.
-    #[error("unknown account: {0:?}")]
+    #[error("unknown account: {0}")]
     UnknownAccount(AccountKey),
 }
 
@@ -583,7 +600,8 @@ mod tests {
         let err = Pop3PoolError::UnknownAccount(key);
         let s = err.to_string();
         assert!(s.contains("unknown account"));
-        assert!(s.contains("mail.example.com"));
-        assert!(s.contains("alice"));
+        assert!(s.contains("mail.example.com:110"));
+        // Username must NOT appear in display output (credential redaction)
+        assert!(!s.contains("alice"));
     }
 }

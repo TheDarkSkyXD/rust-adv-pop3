@@ -473,6 +473,13 @@ impl ReconnectingClient {
     /// DELE marks have been discarded.
     pub async fn retr_many(&mut self, ids: &[u32]) -> Result<Outcome<Vec<Result<Message>>>> {
         match self.client.retr_many(ids).await {
+            Ok(v) if v.iter().any(|r| matches!(r, Err(e) if is_retryable(e))) => {
+                // At least one item hit a transient error — connection is dead.
+                // Reconnect and re-run the entire batch (RETR is idempotent).
+                self.do_reconnect().await?;
+                let v = self.client.retr_many(ids).await?;
+                Ok(Outcome::Reconnected(v))
+            }
             Ok(v) => Ok(Outcome::Fresh(v)),
             Err(e) if is_retryable(&e) => {
                 self.do_reconnect().await?;
@@ -493,6 +500,13 @@ impl ReconnectingClient {
     /// DELE marks have been discarded — including any that were just applied.
     pub async fn dele_many(&mut self, ids: &[u32]) -> Result<Outcome<Vec<Result<()>>>> {
         match self.client.dele_many(ids).await {
+            Ok(v) if v.iter().any(|r| matches!(r, Err(e) if is_retryable(e))) => {
+                // At least one item hit a transient error — connection is dead.
+                // Reconnect and re-run the entire batch (DELE is idempotent).
+                self.do_reconnect().await?;
+                let v = self.client.dele_many(ids).await?;
+                Ok(Outcome::Reconnected(v))
+            }
             Ok(v) => Ok(Outcome::Fresh(v)),
             Err(e) if is_retryable(&e) => {
                 self.do_reconnect().await?;
@@ -566,15 +580,10 @@ impl ReconnectingClient {
     /// This method consumes `self`, providing a compile-time guarantee that no
     /// further commands can be issued after the session ends.
     ///
-    /// If the connection is already dead (transient I/O error on QUIT), the
-    /// error is silently ignored — a best-effort disconnect. Non-transient
-    /// errors are propagated.
+    /// All errors — including transient ones — are propagated so callers can
+    /// detect whether pending DELE marks were actually committed by the server.
     pub async fn quit(self) -> Result<()> {
-        match self.client.quit().await {
-            Ok(()) => Ok(()),
-            Err(e) if is_retryable(&e) => Ok(()), // best-effort QUIT; connection already dead
-            Err(e) => Err(e),
-        }
+        self.client.quit().await
     }
 
     // -------------------------------------------------------------------------
@@ -919,10 +928,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn quit_silently_succeeds_on_dead_connection() {
-        // When quit() encounters ConnectionClosed (best-effort), it returns Ok(()).
-        // We simulate a dead connection by providing a mock with no read data,
-        // causing ConnectionClosed on the QUIT response read.
+    async fn quit_propagates_error_on_dead_connection() {
+        // When quit() encounters ConnectionClosed, it propagates the error
+        // so callers can detect that pending DELE marks were not committed.
         let mock = tokio_test::io::Builder::new().write(b"QUIT\r\n").build();
         let inner = make_mock_client(mock);
         let rc = ReconnectingClient::new_for_test(
@@ -931,12 +939,10 @@ mod tests {
             "user",
             "pass",
         );
-        // QUIT sends the command but the mock EOF causes ConnectionClosed;
-        // ReconnectingClient::quit() ignores it and returns Ok(()).
         let result = rc.quit().await;
         assert!(
-            result.is_ok(),
-            "quit should silently succeed on dead connection"
+            result.is_err(),
+            "quit should propagate error on dead connection"
         );
     }
 }
