@@ -446,4 +446,144 @@ mod tests {
             Pop3ConnectionManager::new(Pop3ClientBuilder::new("localhost"), "user", "pass");
         assert!(manager.has_broken(&mut client));
     }
+
+    // --- PoolConfig tests ---
+
+    #[test]
+    fn pool_config_default() {
+        let cfg = PoolConfig::default();
+        assert_eq!(cfg.connection_timeout, Duration::from_secs(30));
+        assert_eq!(cfg.idle_timeout, Some(Duration::from_secs(300)));
+        assert_eq!(cfg.max_lifetime, Some(Duration::from_secs(1800)));
+    }
+
+    // --- Pop3Pool tests ---
+
+    #[test]
+    fn pool_new_has_no_accounts() {
+        let pool = Pop3Pool::new();
+        assert!(pool.accounts().is_empty());
+    }
+
+    // NOTE: add_account calls bb8::Pool::build_unchecked() which starts a Tokio
+    // interval timer internally, requiring a Tokio runtime context. All tests
+    // that call add_account must therefore use #[tokio::test].
+
+    #[tokio::test]
+    async fn pool_add_account_registers_key() {
+        let pool = Pop3Pool::new();
+        let key = AccountKey::new("host", 110, "user");
+        pool.add_account(
+            key.clone(),
+            Pop3ClientBuilder::new("host").port(110),
+            "user",
+            "pass",
+        );
+        let accounts = pool.accounts();
+        assert_eq!(accounts.len(), 1);
+        assert!(accounts.contains(&key));
+    }
+
+    #[tokio::test]
+    async fn pool_add_account_is_idempotent() {
+        let pool = Pop3Pool::new();
+        let key = AccountKey::new("host", 110, "user");
+        pool.add_account(
+            key.clone(),
+            Pop3ClientBuilder::new("host").port(110),
+            "user",
+            "pass",
+        );
+        // Adding again should not panic and accounts should still have one entry
+        pool.add_account(
+            key.clone(),
+            Pop3ClientBuilder::new("host").port(110),
+            "user",
+            "pass",
+        );
+        assert_eq!(pool.accounts().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn pool_add_multiple_accounts() {
+        let pool = Pop3Pool::new();
+        let k1 = AccountKey::new("host1", 110, "alice");
+        let k2 = AccountKey::new("host2", 110, "bob");
+        let k3 = AccountKey::new("host3", 995, "carol");
+        pool.add_account(k1.clone(), Pop3ClientBuilder::new("host1"), "alice", "pw");
+        pool.add_account(k2.clone(), Pop3ClientBuilder::new("host2"), "bob", "pw");
+        pool.add_account(k3.clone(), Pop3ClientBuilder::new("host3"), "carol", "pw");
+        let accounts = pool.accounts();
+        assert_eq!(accounts.len(), 3);
+        assert!(accounts.contains(&k1));
+        assert!(accounts.contains(&k2));
+        assert!(accounts.contains(&k3));
+    }
+
+    #[tokio::test]
+    async fn pool_remove_account_returns_true() {
+        let pool = Pop3Pool::new();
+        let key = AccountKey::new("host", 110, "user");
+        pool.add_account(key.clone(), Pop3ClientBuilder::new("host"), "user", "pass");
+        assert!(pool.remove_account(&key));
+    }
+
+    #[test]
+    fn pool_remove_account_returns_false() {
+        let pool = Pop3Pool::new();
+        let key = AccountKey::new("host", 110, "user");
+        // Never added — no Tokio runtime needed since we skip add_account
+        assert!(!pool.remove_account(&key));
+    }
+
+    #[tokio::test]
+    async fn pool_remove_account_deregisters() {
+        let pool = Pop3Pool::new();
+        let key = AccountKey::new("host", 110, "user");
+        pool.add_account(key.clone(), Pop3ClientBuilder::new("host"), "user", "pass");
+        pool.remove_account(&key);
+        let accounts = pool.accounts();
+        assert!(!accounts.contains(&key));
+        assert!(accounts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pool_checkout_unknown_account() {
+        let pool = Pop3Pool::new();
+        let key = AccountKey::new("host", 110, "user");
+        let result = pool.checkout(&key).await;
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(matches!(e, Pop3PoolError::UnknownAccount(_)));
+        }
+    }
+
+    #[test]
+    fn pool_default_impl() {
+        let pool = Pop3Pool::default();
+        assert!(pool.accounts().is_empty());
+    }
+
+    #[test]
+    fn pool_with_config() {
+        let cfg = PoolConfig {
+            connection_timeout: Duration::from_secs(10),
+            idle_timeout: None,
+            max_lifetime: None,
+        };
+        let pool = Pop3Pool::with_config(cfg.clone());
+        // No public accessor for config, but we can verify accounts is empty
+        // and it doesn't panic on basic operations
+        assert!(pool.accounts().is_empty());
+    }
+
+    #[test]
+    fn pool_error_unknown_account_display() {
+        let key = AccountKey::new("mail.example.com", 110, "alice");
+        let err = Pop3PoolError::UnknownAccount(key);
+        let s = err.to_string();
+        assert!(s.contains("unknown account"));
+        assert!(s.contains("mail.example.com"));
+        assert!(s.contains("alice"));
+    }
 }
