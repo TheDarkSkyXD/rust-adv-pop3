@@ -93,8 +93,8 @@ Requirements for v3.0 release. Each maps to roadmap phases 5+.
 
 ### MIME Integration
 
-- [ ] **MIME-01**: Client provides `retr_parsed()` method behind a `mime` feature flag
-- [ ] **MIME-02**: MIME integration uses `mail-parser` crate (zero external deps, RFC 5322 + MIME conformant)
+- [x] **MIME-01**: Client provides `retr_parsed()` method behind a `mime` feature flag
+- [x] **MIME-02**: MIME integration uses `mail-parser` crate (zero external deps, RFC 5322 + MIME conformant)
 
 ## v4.0 Requirements
 
@@ -175,8 +175,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | POOL-01 | Phase 8 | Complete |
 | POOL-02 | Phase 8 | Complete |
 | POOL-03 | Phase 8 | Complete |
-| MIME-01 | Phase 9 | Pending |
-| MIME-02 | Phase 9 | Pending |
+| MIME-01 | Phase 9 | Complete |
+| MIME-02 | Phase 9 | Complete |
 
 **Coverage:**
 - v2.0 requirements: 32 total, mapped to phases 1-4: 32

@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-03-02T04:05:00.684Z"
+last_updated: "2026-03-02T04:28:03.708Z"
 progress:
   total_phases: 9
-  completed_phases: 8
-  total_plans: 19
-  completed_plans: 19
+  completed_phases: 9
+  total_plans: 20
+  completed_plans: 20
 ---
 
 ---
@@ -122,16 +122,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-01)
 
 **Core value:** Provide a correct, async, production-quality POP3 client that handles errors gracefully instead of panicking
-**Current focus:** Phase 9 (MIME Integration) — Phase 8 complete. Ready for 09-01.
+**Current focus:** Phase 9 (MIME Integration) — COMPLETE. All 9 phases done.
 
 ## Current Position
 
-Phase: 8 of 9 (Connection Pooling) — Complete
-Plan: 2 of 2 in current phase (08-02 just completed)
-Status: Phase 8 complete — Pop3Pool registry, PoolConfig, PooledConnection alias, RFC 1939 rustdoc, lib.rs re-exports; 25 pool tests passing, all POOL requirements satisfied.
-Last activity: 2026-03-02 — Completed 08-02 (Pop3Pool Registry)
+Phase: 9 of 9 (MIME Integration) — Complete
+Plan: 1 of 1 in current phase (09-01 just completed)
+Status: Phase 9 complete — MIME parsing via mail-parser behind mime feature flag; retr_parsed/top_parsed, ParsedMessage alias, MimeParse error variant, 5 tests passing, CI matrix updated, examples/mime.rs. ALL PHASES COMPLETE.
+Last activity: 2026-03-02 — Completed 09-01 (MIME Integration)
 
-Progress: [█████████░] 94%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -152,16 +152,18 @@ Progress: [█████████░] 94%
 | 06-uidl-caching | 1 of 1 completed | ~3 min | ~3 min |
 | 07-reconnection | 2 of 2 complete | ~7 min | ~4 min |
 | 08-connection-pooling | 2 of 2 complete | ~9 min | ~5 min |
+| 09-mime-integration | 1 of 1 complete | ~4 min | ~4 min |
 
 **Recent Trend:**
-- Last 5 plans: ~4 min, ~2 min, ~4 min, ~3 min, ~5 min
-- Trend: 08-01 fast — plan specified exact code, 2 auto-fixes (bb8 parking_lot disabled, is_valid signature)
+- Last 5 plans: ~2 min, ~4 min, ~3 min, ~5 min, ~4 min
+- Trend: 09-01 fast — plan specified exact code, 2 auto-fixes (error-path mock data, rustfmt formatting)
 
 *Updated after each plan completion*
 | Phase 06 P01 | 3 | 2 tasks | 1 files |
 | Phase 07-reconnection P01 | 3 | 2 tasks | 3 files |
 | Phase 08-connection-pooling P01 | 5 | 2 tasks | 3 files |
 | Phase 08-connection-pooling P02 | 4 | 2 tasks | 2 files |
+| Phase 09-mime-integration P09-01 | 4 | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -246,6 +248,8 @@ Recent decisions affecting current work:
 - [Phase 08-connection-pooling]: std::sync::RwLock used for pool registry (not tokio RwLock) — never held across await, allows synchronous add_account/remove_account
 - [Phase 08-connection-pooling]: checkout() uses get_owned() returning PooledConnection<'static> — Arc cloned before lock released, allowing 'static lifetime without holding read lock across await
 - [Phase 08-connection-pooling]: #[tokio::test] required for tests calling add_account — bb8 build_unchecked starts internal Tokio interval timer requiring runtime context
+- [Phase 09-01]: ParsedMessage = mail_parser::Message<'static> type alias — exposes full mail-parser API directly, no wrapping
+- [Phase 09-01]: MimeParse error variant is unconditional (not feature-gated) — enables exhaustive matching regardless of mime feature activation
 
 ### Pending Todos
 
@@ -265,5 +269,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-02
-Stopped at: Completed 08-02-PLAN.md — Pop3Pool registry struct with PoolConfig, PooledConnection alias, checkout/add_account/remove_account/accounts API; RFC 1939 rustdoc; lib.rs re-exports behind pool feature; 25 pool tests passing. Phase 8 (Connection Pooling) complete. Ready for Phase 9 (MIME Integration).
+Stopped at: Completed 09-01-PLAN.md — MIME parsing via mail-parser behind mime feature flag; retr_parsed/top_parsed methods, ParsedMessage type alias, MimeParse error variant, 5 tests passing, CI matrix updated, examples/mime.rs. Phase 9 complete. ALL 9 PHASES COMPLETE.
 Resume file: None
