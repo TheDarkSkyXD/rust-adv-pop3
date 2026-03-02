@@ -54,6 +54,33 @@ jobs:
       - name: Test
         run: cargo test --no-default-features
 
+  test-pool:
+    name: Test (pool feature)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features: ["pool,rustls-tls", "pool"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --no-default-features --features ${{ matrix.features }}
+
+  clippy-pool:
+    name: Clippy (pool feature)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy (pool + rustls-tls)
+        run: cargo clippy --no-default-features --features pool,rustls-tls -- -D warnings
+      - name: Clippy (pool only)
+        run: cargo clippy --no-default-features --features pool -- -D warnings
+
   fmt:
     name: Format
     runs-on: ubuntu-latest
