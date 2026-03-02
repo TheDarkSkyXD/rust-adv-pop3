@@ -123,7 +123,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. An authentication failure during reconnection is propagated immediately to the caller — the client does not retry on `AuthFailed` errors
   3. After a reconnect, the caller receives an explicit signal that session state (including any pending DELE marks) has been lost — the API does not silently discard this information
   4. Consecutive reconnection attempts use increasing wait intervals with random jitter — two concurrent clients do not produce synchronized retry storms
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 - [ ] 07-01-PLAN.md — backon dependency, SessionReset ZST, ReconnectingClientBuilder, ReconnectingClient struct + retry infrastructure (RECON-01, RECON-02, RECON-04)
 - [ ] 07-02-PLAN.md — All delegating command methods, lib.rs re-exports, tests covering all four RECON requirements (RECON-01, RECON-02, RECON-03, RECON-04)
 
@@ -160,6 +160,6 @@ v3.0 phases execute in order: 5 → 6 → 7 → 8 → 9 (Phase 6 can run in para
 | 4. Protocol Extensions | 2/2 | Complete | 2026-03-02 |
 | 5. Pipelining | 2/2 | Complete | 2026-03-02 |
 | 6. UIDL Caching | 1/1 | Complete   | 2026-03-02 |
-| 7. Reconnection | 0/? | Not started | - |
+| 7. Reconnection | 1/2 | In Progress|  |
 | 8. Connection Pooling | 0/? | Not started | - |
 | 9. MIME Integration | 0/? | Not started | - |

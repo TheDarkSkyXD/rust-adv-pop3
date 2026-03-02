@@ -3,6 +3,19 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: milestone
 status: unknown
+last_updated: "2026-03-02T02:36:10.737Z"
+progress:
+  total_phases: 9
+  completed_phases: 6
+  total_plans: 17
+  completed_plans: 16
+---
+
+---
+gsd_state_version: 1.0
+milestone: v2.0
+milestone_name: milestone
+status: unknown
 last_updated: "2026-03-02T02:02:55.778Z"
 progress:
   total_phases: 9
@@ -57,16 +70,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-01)
 
 **Core value:** Provide a correct, async, production-quality POP3 client that handles errors gracefully instead of panicking
-**Current focus:** Phase 6 (UIDL Caching) COMPLETE — 06-01 done. Ready for Phase 7 (Reconnection).
+**Current focus:** Phase 7 (Reconnection) IN PROGRESS — 07-01 done. Ready for 07-02 (command wrappers).
 
 ## Current Position
 
-Phase: 6 of 9 (UIDL Caching) — COMPLETE
-Plan: 1 of 1 in current phase (just completed 06-01)
-Status: 06-01 complete — unseen_uids, fetch_unseen, prune_seen incremental sync methods, 15 new unit tests, CACHE-01/02/03 satisfied, 139 unit + 2 integration + 30 doc tests passing.
-Last activity: 2026-03-02 — Completed 06-01 (UIDL Caching — Incremental Sync Methods)
+Phase: 7 of 9 (Reconnection) — IN PROGRESS
+Plan: 1 of 2 in current phase (just completed 07-01)
+Status: 07-01 complete — Outcome<T> enum, ReconnectingClientBuilder, ReconnectingClient, connect_and_auth, is_retryable, do_reconnect, 15 unit tests, RECON-01/02/04 satisfied, backon=1.6 added.
+Last activity: 2026-03-02 — Completed 07-01 (Reconnection Foundation — Types and Retry Infrastructure)
 
-Progress: [██████░░░░] 67%
+Progress: [███████░░░] 72%
 
 ## Performance Metrics
 
@@ -85,13 +98,15 @@ Progress: [██████░░░░] 67%
 | 04-protocol-extensions | 2 of 2 completed | ~6 min | ~3 min |
 | 05-pipelining | 2 of 2 completed | ~8 min | ~4 min |
 | 06-uidl-caching | 1 of 1 completed | ~3 min | ~3 min |
+| 07-reconnection | 1 of 2 in progress | ~3 min | ~3 min |
 
 **Recent Trend:**
-- Last 5 plans: ~45 min, ~4 min, ~2 min, ~4 min, ~3 min
-- Trend: 06-01 very fast — plan fully specified with exact code, minimal deviation (2 clippy/fmt auto-fixes)
+- Last 5 plans: ~4 min, ~2 min, ~4 min, ~3 min, ~3 min
+- Trend: 07-01 very fast — plan fully specified with exact code, 1 clippy auto-fix (type alias)
 
 *Updated after each plan completion*
 | Phase 06 P01 | 3 | 2 tasks | 1 files |
+| Phase 07-reconnection P01 | 3 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -163,6 +178,9 @@ Recent decisions affecting current work:
 - [Phase 06-01]: No require_auth() calls in wrapper methods — auth enforced by delegated uidl() and retr()
 - [Phase 06-01]: fetch_unseen fails fast on first retr() error — no partial results returned
 - [Phase 06-01]: Section heading doc comment immediately precedes first method doc to satisfy clippy::empty_line_after_doc_comments
+- [Phase 07-01]: ReconnectCallback type alias for Option<Box<dyn FnMut(u32, &Pop3Error) + Send>> avoids clippy::type_complexity on both builder and client structs
+- [Phase 07-01]: is_retryable covers Io, ConnectionClosed, Timeout, SysTemp — AuthFailed excluded to prevent account lockout risk
+- [Phase 07-01]: Credentials passed to connect() not stored on builder — minimises time credentials exist in plain-text builder fields
 
 ### Pending Todos
 
@@ -182,5 +200,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-02
-Stopped at: Completed 06-01-PLAN.md — unseen_uids, fetch_unseen, prune_seen incremental sync methods with # Incremental Sync section heading, CACHE-01/02/03 satisfied, 139 unit + 2 integration + 30 doc tests passing, clippy and fmt clean. Phase 6 complete. Ready for Phase 7 (Reconnection).
+Stopped at: Completed 07-01-PLAN.md — Outcome<T> enum, ReconnectingClientBuilder, ReconnectingClient, connect_and_auth, is_retryable, do_reconnect with backon=1.6, 15 unit tests passing, RECON-01/02/04 satisfied, clippy and fmt clean. Phase 7 Plan 1 complete. Ready for 07-02 (command wrappers).
 Resume file: None

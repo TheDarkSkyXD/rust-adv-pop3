@@ -80,10 +80,10 @@ Requirements for v3.0 release. Each maps to roadmap phases 5+.
 
 ### Reconnection
 
-- [ ] **RECON-01**: Client provides automatic reconnection with exponential backoff on connection drop
-- [ ] **RECON-02**: Reconnection retries only on I/O errors — authentication failures propagate immediately
+- [x] **RECON-01**: Client provides automatic reconnection with exponential backoff on connection drop
+- [x] **RECON-02**: Reconnection retries only on I/O errors — authentication failures propagate immediately
 - [ ] **RECON-03**: Reconnection explicitly surfaces session-state loss (DELE marks are not preserved) to caller
-- [ ] **RECON-04**: Backoff uses jitter to prevent thundering herd
+- [x] **RECON-04**: Backoff uses jitter to prevent thundering herd
 
 ### Connection Pooling
 
@@ -168,10 +168,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CACHE-01 | Phase 6 | Complete |
 | CACHE-02 | Phase 6 | Complete |
 | CACHE-03 | Phase 6 | Complete |
-| RECON-01 | Phase 7 | Pending |
-| RECON-02 | Phase 7 | Pending |
+| RECON-01 | Phase 7 | Complete |
+| RECON-02 | Phase 7 | Complete |
 | RECON-03 | Phase 7 | Pending |
-| RECON-04 | Phase 7 | Pending |
+| RECON-04 | Phase 7 | Complete |
 | POOL-01 | Phase 8 | Pending |
 | POOL-02 | Phase 8 | Pending |
 | POOL-03 | Phase 8 | Pending |
