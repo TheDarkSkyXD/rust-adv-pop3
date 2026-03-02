@@ -123,7 +123,9 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. An authentication failure during reconnection is propagated immediately to the caller — the client does not retry on `AuthFailed` errors
   3. After a reconnect, the caller receives an explicit signal that session state (including any pending DELE marks) has been lost — the API does not silently discard this information
   4. Consecutive reconnection attempts use increasing wait intervals with random jitter — two concurrent clients do not produce synchronized retry storms
-**Plans**: TBD
+**Plans:** 2 plans
+- [ ] 07-01-PLAN.md — backon dependency, SessionReset ZST, ReconnectingClientBuilder, ReconnectingClient struct + retry infrastructure (RECON-01, RECON-02, RECON-04)
+- [ ] 07-02-PLAN.md — All delegating command methods, lib.rs re-exports, tests covering all four RECON requirements (RECON-01, RECON-02, RECON-03, RECON-04)
 
 ### Phase 8: Connection Pooling
 **Goal**: Callers can manage multiple POP3 accounts concurrently using a pool that enforces the RFC 1939 exclusive-lock constraint at the type level and in documentation
