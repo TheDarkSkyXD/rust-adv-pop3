@@ -83,23 +83,23 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-01)
 
 **Core value:** Provide a correct, async, production-quality POP3 client that handles errors gracefully instead of panicking
-**Current focus:** Phase 7 (Reconnection) COMPLETE — both 07-01 and 07-02 done. Ready for Phase 8 (Connection Pooling).
+**Current focus:** Phase 8 (Connection Pooling) COMPLETE — both 08-01 and 08-02 done. Ready for Phase 9 (MIME Integration).
 
 ## Current Position
 
-Phase: 7 of 9 (Reconnection) — COMPLETE
-Plan: 2 of 2 in current phase (07-02 just completed)
-Status: 07-02 complete — all 15 ReconnectingClient command wrappers, best-effort quit, read-only accessors, 7 new tests, RECON-01/02/03/04 all satisfied.
-Last activity: 2026-03-02 — Completed 07-02 (Reconnection Command Wrappers)
+Phase: 8 of 9 (Connection Pooling) — COMPLETE
+Plan: 2 of 2 in current phase (08-02 just completed)
+Status: 08-02 complete — 28 unit tests for Pop3ConnectionManager/Pop3Pool, CI pool matrix added, POOL-01/02/03 all satisfied.
+Last activity: 2026-03-01 — Completed 08-02 (Connection Pool Tests + CI)
 
-Progress: [████████░░] 78%
+Progress: [█████████░] 89%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 10
-- Average duration: ~11 min
-- Total execution time: ~140 min
+- Total plans completed: 12
+- Average duration: ~10 min
+- Total execution time: ~155 min
 
 **By Phase:**
 
@@ -112,15 +112,17 @@ Progress: [████████░░] 78%
 | 05-pipelining | 2 of 2 completed | ~8 min | ~4 min |
 | 06-uidl-caching | 1 of 1 completed | ~3 min | ~3 min |
 | 07-reconnection | 2 of 2 complete | ~7 min | ~4 min |
+| 08-connection-pooling | 2 of 2 complete | ~18 min | ~9 min |
 
 **Recent Trend:**
-- Last 5 plans: ~4 min, ~2 min, ~4 min, ~3 min, ~3 min
-- Trend: 07-01 very fast — plan fully specified with exact code, 1 clippy auto-fix (type alias)
+- Last 5 plans: ~4 min, ~3 min, ~3 min, ~3 min, ~15 min
+- Trend: 08-02 larger test suite (28 tests, 4 groups) — TDD tasks with comprehensive coverage
 
 *Updated after each plan completion*
 | Phase 06 P01 | 3 | 2 tasks | 1 files |
 | Phase 07-reconnection P01 | 3 | 2 tasks | 3 files |
 | Phase 08 P01 | 3 | 2 tasks | 4 files |
+| Phase 08 P02 | 15 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -202,6 +204,9 @@ Recent decisions affecting current work:
 - [Phase 08]: Pop3PoolError is standalone in pool.rs (not added to Pop3Error) — respects pool feature flag boundary
 - [Phase 08]: Builder hostname()/username() accessors gated with #[cfg(feature = pool)] to suppress dead_code warnings in base builds
 - [Phase 08]: get() uses get_owned() returning PooledConnection<'static, M> — Arc keeps pool alive after RwLock guard drops
+- [Phase 08-02]: Pool behavior tests use FakeConn+AlwaysOkManager (no POP3) — sufficient to test bb8 scheduling/lifecycle
+- [Phase 08-02]: pool_checkout_times_out uses multi_thread flavor — oneshot channel coordination needs cooperative task scheduling
+- [Phase 08-02]: CI adds test-pool matrix + clippy-pool jobs as new entries — existing TLS matrix jobs unchanged
 
 ### Pending Todos
 
@@ -213,13 +218,13 @@ None yet.
 - [Phase 3 - Resolved]: OpenSSL build on Windows CI — CI matrix uses libssl-dev install step on ubuntu-latest, gated to openssl-tls matrix leg.
 - [Phase 4]: STARTTLS BufReader drain behavior is under-documented in tokio ecosystem. Validate against Outlook and Gmail (known to coalesce TCP segments) during Phase 4, not just mock server.
 - [Phase 5]: Windowed pipeline implementation — PITFALLS.md specifies 4-8 command window but exact interleave mechanism (select! vs. send/drain interleave) should be prototyped before final design. Resolve in Phase 5 planning.
-- [Phase 8]: bb8 per-account exclusivity enforcement — decide whether each Pop3Pool targets one account (single builder per pool) or supports multi-account with runtime enforcement. Public API decision; resolve before Phase 8 begins.
-- [Phase 8]: bb8::ManageConnection async fn in traits — verify whether bb8 0.9 supports native async fn in impls (Rust 1.75+) or requires #[async_trait] macro. Check before Phase 8 planning.
+- [Phase 8 - Resolved]: bb8 per-account exclusivity enforced via max_size(1) per account pool — multi-account registry, single connection per mailbox
+- [Phase 8 - Resolved]: bb8 0.9 supports native async fn in impl ManageConnection traits (Rust 1.75+) — no #[async_trait] macro needed
 - [Phase 9]: Dot-unstuffing precondition — RESOLVED in 01-02: retr_dot_unstuffing test confirms end-to-end dot-unstuffing works. Phase 9 entry gate satisfied.
 - [Environment]: Windows MSVC linker (link.exe) fails when compiling C-using build scripts (ring, getrandom, rustls). Pure-Rust tests and cargo check work fine. cargo clippy requires full recompile when cache is stale — may fail with linker error. This is a pre-existing environment constraint.
 
 ## Session Continuity
 
-Last session: 2026-03-02
-Stopped at: Completed 07-02-PLAN.md — all 15 ReconnectingClient command wrappers, best-effort quit, read-only accessors, 7 new tests, 163 unit + 2 integration + 32 doc tests passing, RECON-01/02/03/04 all satisfied, clippy and fmt clean. Phase 7 complete. Ready for Phase 8 (Connection Pooling).
+Last session: 2026-03-01
+Stopped at: Completed 08-02-PLAN.md — 28 unit tests for Pop3ConnectionManager/Pop3Pool, CI pool matrix added, POOL-01/02/03 all satisfied, clippy and fmt clean. Phase 8 complete. Ready for Phase 9 (MIME Integration).
 Resume file: None

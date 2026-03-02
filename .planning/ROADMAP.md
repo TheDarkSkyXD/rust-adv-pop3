@@ -26,7 +26,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 5: Pipelining** - Foundation modifications and RFC 2449 command pipelining with windowed send strategy (completed 2026-03-02)
 - [x] **Phase 6: UIDL Caching** - UIDL cache and incremental sync helper for avoiding redundant message downloads (completed 2026-03-02)
 - [x] **Phase 7: Reconnection** - Automatic reconnection with exponential backoff and jitter via Decorator pattern (completed 2026-03-02)
-- [ ] **Phase 8: Connection Pooling** - bb8-backed connection pool for multi-account concurrent access
+- [x] **Phase 8: Connection Pooling** - bb8-backed connection pool for multi-account concurrent access (completed 2026-03-01)
 - [ ] **Phase 9: MIME Integration** - Optional MIME parsing via mail-parser behind a feature flag
 
 ## Phase Details
@@ -124,8 +124,8 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. After a reconnect, the caller receives an explicit signal that session state (including any pending DELE marks) has been lost — the API does not silently discard this information
   4. Consecutive reconnection attempts use increasing wait intervals with random jitter — two concurrent clients do not produce synchronized retry storms
 **Plans:** 2/2 plans complete
-- [ ] 07-01-PLAN.md — backon dependency, SessionReset ZST, ReconnectingClientBuilder, ReconnectingClient struct + retry infrastructure (RECON-01, RECON-02, RECON-04)
-- [ ] 07-02-PLAN.md — All delegating command methods, lib.rs re-exports, tests covering all four RECON requirements (RECON-01, RECON-02, RECON-03, RECON-04)
+- [x] 07-01-PLAN.md — backon dependency, SessionReset ZST, ReconnectingClientBuilder, ReconnectingClient struct + retry infrastructure (RECON-01, RECON-02, RECON-04)
+- [x] 07-02-PLAN.md — All delegating command methods, lib.rs re-exports, tests covering all four RECON requirements (RECON-01, RECON-02, RECON-03, RECON-04)
 
 ### Phase 8: Connection Pooling
 **Goal**: Callers can manage multiple POP3 accounts concurrently using a pool that enforces the RFC 1939 exclusive-lock constraint at the type level and in documentation
@@ -135,7 +135,9 @@ Decimal phases appear between their surrounding integers in numeric order.
   1. A caller can check out a live `Client` connection from the pool by account key and return it after use — the pool manages connection health via NOOP probes
   2. Attempting to create a second concurrent connection to the same mailbox via the pool blocks until the first connection is returned — no two connections to the same account are active simultaneously
   3. The `Pop3Pool` rustdoc prominently documents that POP3 forbids concurrent access to the same mailbox per RFC 1939, and explains the per-account exclusivity model
-**Plans**: TBD
+**Plans**: 2/2 plans complete
+- [x] 08-01-PLAN.md — bb8 dependency, Pop3ConnectionManager, Pop3Pool with RwLock registry, Pop3PoolError, AccountKey, module + lib.rs wire-up (POOL-01, POOL-02, POOL-03)
+- [x] 08-02-PLAN.md — 28 unit tests (manager health checks, bb8 pool behavior, registry ops, type tests), CI pool matrix (POOL-01, POOL-02, POOL-03)
 
 ### Phase 9: MIME Integration
 **Goal**: Callers can retrieve and parse a message's MIME structure in one call without manually passing raw RFC 5322 bytes to a third-party parser
@@ -161,5 +163,5 @@ v3.0 phases execute in order: 5 → 6 → 7 → 8 → 9 (Phase 6 can run in para
 | 5. Pipelining | 2/2 | Complete | 2026-03-02 |
 | 6. UIDL Caching | 1/1 | Complete   | 2026-03-02 |
 | 7. Reconnection | 2/2 | Complete   | 2026-03-02 |
-| 8. Connection Pooling | 1/2 | In Progress|  |
+| 8. Connection Pooling | 2/2 | Complete   | 2026-03-01 |
 | 9. MIME Integration | 0/? | Not started | - |
