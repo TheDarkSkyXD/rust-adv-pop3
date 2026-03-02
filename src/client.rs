@@ -2473,4 +2473,258 @@ mod tests {
         let client = build_test_client(mock);
         assert!(!client.supports_pipelining());
     }
+
+    // =========================================================================
+    // Incremental Sync: unseen_uids
+    // =========================================================================
+
+    #[tokio::test]
+    async fn unseen_uids_returns_all_when_seen_is_empty() {
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b"1 abc123\r\n")
+            .read(b"2 def456\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let seen: HashSet<String> = HashSet::new();
+        let result = client.unseen_uids(&seen).await.unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].unique_id, "abc123");
+        assert_eq!(result[1].unique_id, "def456");
+    }
+
+    #[tokio::test]
+    async fn unseen_uids_filters_seen_entries() {
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b"1 abc123\r\n")
+            .read(b"2 def456\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let seen: HashSet<String> = ["abc123".to_string()].into();
+        let result = client.unseen_uids(&seen).await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].unique_id, "def456");
+        assert_eq!(result[0].message_id, 2);
+    }
+
+    #[tokio::test]
+    async fn unseen_uids_returns_empty_when_all_seen() {
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b"1 abc123\r\n")
+            .read(b"2 def456\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let seen: HashSet<String> = ["abc123".to_string(), "def456".to_string()].into();
+        let result = client.unseen_uids(&seen).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unseen_uids_empty_mailbox_returns_empty() {
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let seen: HashSet<String> = HashSet::new();
+        let result = client.unseen_uids(&seen).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unseen_uids_requires_auth() {
+        let mock = Builder::new().build();
+        let mut client = build_test_client(mock);
+        let seen: HashSet<String> = HashSet::new();
+        let result = client.unseen_uids(&seen).await;
+        assert!(matches!(result, Err(Pop3Error::NotAuthenticated)));
+    }
+
+    // =========================================================================
+    // Incremental Sync: fetch_unseen
+    // =========================================================================
+
+    #[tokio::test]
+    async fn fetch_unseen_returns_new_messages_with_entries() {
+        let mock = Builder::new()
+            // unseen_uids -> uidl(None)
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b"1 abc123\r\n")
+            .read(b"2 def456\r\n")
+            .read(b".\r\n")
+            // retr(2) -- only def456 is unseen
+            .write(b"RETR 2\r\n")
+            .read(b"+OK\r\n")
+            .read(b"From: test@example.com\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let seen: HashSet<String> = ["abc123".to_string()].into();
+        let result = client.fetch_unseen(&seen).await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0.unique_id, "def456");
+        assert_eq!(result[0].0.message_id, 2);
+        assert!(result[0].1.data.contains("From: test@example.com"));
+    }
+
+    #[tokio::test]
+    async fn fetch_unseen_empty_when_all_seen() {
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b"1 abc123\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let seen: HashSet<String> = ["abc123".to_string()].into();
+        let result = client.fetch_unseen(&seen).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn fetch_unseen_does_not_mutate_seen() {
+        // fetch_unseen takes &HashSet<String> -- can only be verified by type, but
+        // we confirm the seen set is unchanged from the caller's perspective by
+        // checking the count before and after (structural test).
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b"1 abc123\r\n")
+            .read(b"2 def456\r\n")
+            .read(b".\r\n")
+            .write(b"RETR 2\r\n")
+            .read(b"+OK\r\n")
+            .read(b"body\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let seen: HashSet<String> = ["abc123".to_string()].into();
+        let before_len = seen.len();
+        let _ = client.fetch_unseen(&seen).await.unwrap();
+        // seen is unchanged -- fetch_unseen only takes &HashSet (immutable borrow)
+        assert_eq!(seen.len(), before_len);
+    }
+
+    #[tokio::test]
+    async fn fetch_unseen_fails_fast_on_retr_error() {
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b"1 abc123\r\n")
+            .read(b"2 def456\r\n")
+            .read(b".\r\n")
+            // retr(1) succeeds
+            .write(b"RETR 1\r\n")
+            .read(b"+OK\r\n")
+            .read(b"body of 1\r\n")
+            .read(b".\r\n")
+            // retr(2) fails -- server returns -ERR
+            .write(b"RETR 2\r\n")
+            .read(b"-ERR no such message\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let seen: HashSet<String> = HashSet::new();
+        // fetch_unseen propagates the error immediately; no partial results
+        let result = client.fetch_unseen(&seen).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn fetch_unseen_requires_auth() {
+        let mock = Builder::new().build();
+        let mut client = build_test_client(mock);
+        let seen: HashSet<String> = HashSet::new();
+        let result = client.fetch_unseen(&seen).await;
+        assert!(matches!(result, Err(Pop3Error::NotAuthenticated)));
+    }
+
+    // =========================================================================
+    // Incremental Sync: prune_seen
+    // =========================================================================
+
+    #[tokio::test]
+    async fn prune_seen_removes_ghost_uids() {
+        // Server only has message 2 (def456); abc123 is a ghost
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b"2 def456\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let mut seen: HashSet<String> = ["abc123".to_string(), "def456".to_string()].into();
+        let pruned = client.prune_seen(&mut seen).await.unwrap();
+        assert!(!seen.contains("abc123"), "ghost uid should be pruned");
+        assert!(seen.contains("def456"), "live uid should be retained");
+        assert_eq!(pruned.len(), 1);
+        assert_eq!(pruned[0], "abc123");
+    }
+
+    #[tokio::test]
+    async fn prune_seen_returns_empty_when_no_ghosts() {
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b"1 abc123\r\n")
+            .read(b"2 def456\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let mut seen: HashSet<String> = ["abc123".to_string()].into();
+        let pruned = client.prune_seen(&mut seen).await.unwrap();
+        assert!(pruned.is_empty());
+        assert!(seen.contains("abc123"));
+    }
+
+    #[tokio::test]
+    async fn prune_seen_empties_seen_when_server_is_empty() {
+        // Server has no messages at all
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let mut seen: HashSet<String> = ["abc123".to_string(), "def456".to_string()].into();
+        let pruned = client.prune_seen(&mut seen).await.unwrap();
+        assert!(
+            seen.is_empty(),
+            "all uids should be pruned when server has no messages"
+        );
+        assert_eq!(pruned.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn prune_seen_empty_seen_is_noop() {
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b"1 abc123\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let mut seen: HashSet<String> = HashSet::new();
+        let pruned = client.prune_seen(&mut seen).await.unwrap();
+        assert!(pruned.is_empty());
+        assert!(seen.is_empty());
+    }
+
+    #[tokio::test]
+    async fn prune_seen_requires_auth() {
+        let mock = Builder::new().build();
+        let mut client = build_test_client(mock);
+        let mut seen: HashSet<String> = HashSet::new();
+        let result = client.prune_seen(&mut seen).await;
+        assert!(matches!(result, Err(Pop3Error::NotAuthenticated)));
+    }
 }
