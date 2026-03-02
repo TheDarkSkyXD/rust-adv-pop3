@@ -14,7 +14,10 @@
 //! pop3 = { version = "2", features = ["pool"] }
 //! ```
 
+use std::collections::HashMap;
 use std::future::Future;
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use crate::builder::Pop3ClientBuilder;
 use crate::client::Pop3Client;
@@ -110,6 +113,9 @@ pub enum Pop3PoolError {
     /// A POP3 connection-level error occurred.
     #[error("pool connection error: {0}")]
     Connection(#[source] Pop3Error),
+    /// The requested account has not been registered with the pool.
+    #[error("unknown account: {0:?}")]
+    UnknownAccount(AccountKey),
 }
 
 impl From<bb8::RunError<Pop3Error>> for Pop3PoolError {
@@ -118,6 +124,198 @@ impl From<bb8::RunError<Pop3Error>> for Pop3PoolError {
             bb8::RunError::TimedOut => Pop3PoolError::CheckoutTimeout,
             bb8::RunError::User(e) => Pop3PoolError::Connection(e),
         }
+    }
+}
+
+/// Configuration for pool behavior applied to every per-account pool.
+///
+/// All durations have sensible defaults suitable for POP3 workloads.
+#[derive(Debug, Clone)]
+pub struct PoolConfig {
+    /// Maximum time to wait for a connection checkout (default: 30 seconds).
+    pub connection_timeout: Duration,
+    /// Idle connections are closed after this duration (default: 5 minutes).
+    ///
+    /// Set to `None` to disable idle timeout.
+    pub idle_timeout: Option<Duration>,
+    /// Connections older than this are closed (default: 30 minutes).
+    ///
+    /// Set to `None` to disable max lifetime.
+    pub max_lifetime: Option<Duration>,
+}
+
+impl Default for PoolConfig {
+    fn default() -> Self {
+        Self {
+            connection_timeout: Duration::from_secs(30),
+            idle_timeout: Some(Duration::from_secs(300)),
+            max_lifetime: Some(Duration::from_secs(1800)),
+        }
+    }
+}
+
+/// A checked-out POP3 connection that returns to the pool on drop.
+///
+/// This type implements `Deref<Target = Pop3Client>` and
+/// `DerefMut<Target = Pop3Client>`, so all `Pop3Client` methods are
+/// available directly on the guard.
+///
+/// The connection is automatically returned to the pool when this value
+/// is dropped. The next caller blocked on [`Pop3Pool::checkout()`] for
+/// the same account will then receive it.
+pub type PooledConnection = bb8::PooledConnection<'static, Pop3ConnectionManager>;
+
+/// A connection pool for managing multiple POP3 mailbox accounts concurrently.
+///
+/// # RFC 1939 Exclusive Mailbox Access
+///
+/// **POP3 forbids concurrent access to the same mailbox.** Per RFC 1939 section 8:
+///
+/// > "the POP3 server then acquires an exclusive-access lock on the maildrop,
+/// > necessary to prevent messages from being overwritten by stranded
+/// > retrievals, and stranded removes."
+///
+/// > "If the maildrop cannot be opened for some reason (for example, a lock
+/// > can not be acquired, the user is denied access to the maildrop, or the
+/// > maildrop cannot be parsed), the POP3 server responds with a negative
+/// > status indicator."
+///
+/// This pool enforces that constraint at the library level: each mailbox
+/// account is backed by an independent pool capped at **one connection**.
+/// A caller attempting to check out a connection to an account that is already
+/// in use will **wait asynchronously** until the previous caller drops their
+/// [`PooledConnection`].
+///
+/// This is a **per-account** model, not a traditional N-connection pool.
+/// Multiple accounts can be accessed concurrently; a single account cannot.
+///
+/// # Usage
+///
+/// ```no_run
+/// use pop3::pool::{Pop3Pool, AccountKey};
+/// use pop3::Pop3ClientBuilder;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let pool = Pop3Pool::new();
+///
+///     // Register an account
+///     let key = AccountKey::new("pop.example.com", 110, "alice");
+///     pool.add_account(
+///         key.clone(),
+///         Pop3ClientBuilder::new("pop.example.com").port(110),
+///         "alice",
+///         "secret",
+///     );
+///
+///     // Check out a connection (blocks if already in use by another task)
+///     let mut conn = pool.checkout(&key).await?;
+///     let stat = conn.stat().await?;
+///     println!("{} messages", stat.message_count);
+///     // Connection returns to pool when `conn` drops
+///
+///     Ok(())
+/// }
+/// ```
+pub struct Pop3Pool {
+    pools: RwLock<HashMap<AccountKey, Arc<bb8::Pool<Pop3ConnectionManager>>>>,
+    config: PoolConfig,
+}
+
+impl Pop3Pool {
+    /// Create a new pool with default configuration.
+    pub fn new() -> Self {
+        Self {
+            pools: RwLock::new(HashMap::new()),
+            config: PoolConfig::default(),
+        }
+    }
+
+    /// Create a new pool with custom configuration.
+    pub fn with_config(config: PoolConfig) -> Self {
+        Self {
+            pools: RwLock::new(HashMap::new()),
+            config,
+        }
+    }
+
+    /// Register a POP3 account with the pool.
+    ///
+    /// The pool creates a per-account bb8 pool capped at one connection.
+    /// Connections are created lazily on first [`checkout()`](Self::checkout).
+    ///
+    /// If the account is already registered, this is a no-op (idempotent).
+    pub fn add_account(
+        &self,
+        key: AccountKey,
+        builder: Pop3ClientBuilder,
+        username: impl Into<String>,
+        password: impl Into<String>,
+    ) {
+        let mut pools = self.pools.write().expect("pool registry lock poisoned");
+        if pools.contains_key(&key) {
+            return; // idempotent
+        }
+        let manager = Pop3ConnectionManager::new(builder, username, password);
+        let pool = bb8::Pool::builder()
+            .max_size(1)
+            .min_idle(Some(0))
+            .test_on_check_out(true)
+            .retry_connection(false)
+            .connection_timeout(self.config.connection_timeout)
+            .idle_timeout(self.config.idle_timeout)
+            .max_lifetime(self.config.max_lifetime)
+            .build_unchecked(manager);
+        pools.insert(key, Arc::new(pool));
+    }
+
+    /// Check out a connection for the given account.
+    ///
+    /// Returns a [`PooledConnection`] that automatically returns to the pool
+    /// when dropped. If the account's connection is already checked out,
+    /// this waits asynchronously until it becomes available (up to
+    /// `connection_timeout` from [`PoolConfig`]).
+    ///
+    /// # Errors
+    ///
+    /// - [`Pop3PoolError::UnknownAccount`] — if the key has not been registered
+    /// - [`Pop3PoolError::CheckoutTimeout`] — if the checkout times out
+    /// - [`Pop3PoolError::Connection`] — if connecting/authenticating fails
+    pub async fn checkout(&self, key: &AccountKey) -> Result<PooledConnection, Pop3PoolError> {
+        let pool = {
+            let pools = self.pools.read().expect("pool registry lock poisoned");
+            pools
+                .get(key)
+                .cloned() // clones the Arc, not the pool
+                .ok_or_else(|| Pop3PoolError::UnknownAccount(key.clone()))?
+        };
+        // RwLock guard is dropped here — safe to await
+        pool.get_owned().await.map_err(Pop3PoolError::from)
+    }
+
+    /// Remove a registered account from the pool.
+    ///
+    /// Returns `true` if the account was present and removed, `false` if the
+    /// account was not registered.
+    ///
+    /// Existing [`PooledConnection`] handles checked out from this account
+    /// continue to work until dropped. They just won't return to any pool
+    /// (they are discarded on drop instead).
+    pub fn remove_account(&self, key: &AccountKey) -> bool {
+        let mut pools = self.pools.write().expect("pool registry lock poisoned");
+        pools.remove(key).is_some()
+    }
+
+    /// Return the list of currently registered account keys.
+    pub fn accounts(&self) -> Vec<AccountKey> {
+        let pools = self.pools.read().expect("pool registry lock poisoned");
+        pools.keys().cloned().collect()
+    }
+}
+
+impl Default for Pop3Pool {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -109,3 +109,8 @@ pub use client::Pop3Client;
 pub use error::{Pop3Error, Result};
 pub use reconnect::{Outcome, ReconnectingClient, ReconnectingClientBuilder};
 pub use types::{Capability, ListEntry, Message, SessionState, Stat, UidlEntry};
+
+#[cfg(feature = "pool")]
+pub use pool::{
+    AccountKey, PoolConfig, PooledConnection, Pop3ConnectionManager, Pop3Pool, Pop3PoolError,
+};
