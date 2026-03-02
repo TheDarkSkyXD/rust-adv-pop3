@@ -154,7 +154,7 @@ v3.0 phases execute in order: 5 → 6 → 7 → 8 → 9 (Phase 6 can run in para
 | 2. Async Core | 4/4 | Complete (verified) | 2026-03-01 |
 | 3. TLS and Publish | 4/4 | Complete   | 2026-03-01 |
 | 4. Protocol Extensions | 2/2 | Complete | 2026-03-02 |
-| 5. Pipelining | 0/? | Not started | - |
+| 5. Pipelining | 1/2 | In Progress|  |
 | 6. UIDL Caching | 0/? | Not started | - |
 | 7. Reconnection | 0/? | Not started | - |
 | 8. Connection Pooling | 0/? | Not started | - |

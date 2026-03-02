@@ -2,26 +2,13 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: milestone
-status: unknown
-last_updated: "2026-03-02T00:48:53.359Z"
-progress:
-  total_phases: 9
-  completed_phases: 4
-  total_plans: 12
-  completed_plans: 12
----
-
----
-gsd_state_version: 1.0
-milestone: v2.0
-milestone_name: milestone
 status: in_progress
-last_updated: "2026-03-01T23:59:00.000Z"
+last_updated: "2026-03-02T01:10:15Z"
 progress:
   total_phases: 9
   completed_phases: 4
   total_plans: 13
-  completed_plans: 12
+  completed_plans: 13
 ---
 
 # Project State
@@ -31,16 +18,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-01)
 
 **Core value:** Provide a correct, async, production-quality POP3 client that handles errors gracefully instead of panicking
-**Current focus:** Phase 4 (Protocol Extensions) complete — both 04-01 (RESP-CODES, APOP) and 04-02 (Pop3ClientBuilder) done. Ready for Phase 5 (Pipelining).
+**Current focus:** Phase 5 (Pipelining) in progress — 05-01 (Transport Infrastructure) complete. Ready for 05-02 (batch methods: retr_many, dele_many).
 
 ## Current Position
 
-Phase: 4 of 9 (Protocol Extensions) — COMPLETE
-Plan: 2 of 2 in current phase (just completed 04-02)
-Status: 04-02 complete — Pop3ClientBuilder with consuming-chain fluent API, smart port defaults (110/995), auto-auth via .credentials()/.apop(), feature-gated .tls()/.starttls(), 16 builder unit tests, 103 unit + 2 integration + 27 doc tests passing.
-Last activity: 2026-03-02 — Completed 04-02 (Pop3ClientBuilder fluent API)
+Phase: 5 of 9 (Pipelining) — IN PROGRESS
+Plan: 1 of 2 in current phase (just completed 05-01)
+Status: 05-01 complete — BufWriter on Transport writer, pub(crate) reader/writer/timeout, Pop3Error::ConnectionClosed variant, is_closed()/set_closed() on Transport, is_closed() on Pop3Client, 108 unit + 2 integration + 24 doc tests passing.
+Last activity: 2026-03-02 — Completed 05-01 (Transport Infrastructure for Pipelining)
 
-Progress: [████░░░░░░] 44%
+Progress: [████░░░░░░] 50%
 
 ## Performance Metrics
 
@@ -57,10 +44,11 @@ Progress: [████░░░░░░] 44%
 | 02-async-core | 4 | ~40 min | ~10 min |
 | 03-tls-and-publish | 4 completed | ~60 min | ~15 min |
 | 04-protocol-extensions | 2 of 2 completed | ~6 min | ~3 min |
+| 05-pipelining | 1 of 2 completed | ~4 min | ~4 min |
 
 **Recent Trend:**
-- Last 5 plans: ~7 min, ~8 min, ~45 min, ~4 min, ~2 min
-- Trend: 04-02 was very fast — complete plan spec, builder pattern is well-understood, single formatting fix only
+- Last 5 plans: ~8 min, ~45 min, ~4 min, ~2 min, ~4 min
+- Trend: 05-01 fast — very specific plan with all details spelled out, 2 small auto-fixes (lint + test mock)
 
 *Updated after each plan completion*
 
@@ -123,6 +111,10 @@ Recent decisions affecting current work:
 - [04-02]: Internal TlsMode and AuthMode enums are private — only builder methods are public API surface
 - [04-02]: Last-wins semantics for both TLS mode and auth mode — consistent, predictable behavior
 - [04-02]: Builder derives Debug and Clone — Clone required by Phase 8 connection pooling (bb8 reuse)
+- [05-01]: InnerStream promoted to pub(crate) to satisfy private_interfaces lint — reader/writer pub(crate) fields require their type to also be pub(crate); no external API change
+- [05-01]: BufWriter default buffer size (8 KB) used — commands are ~15 bytes each, no tuning needed
+- [05-01]: ConnectionClosed wording is "connection closed" matching legacy EOF error message
+- [05-01]: is_closed is private bool on Transport, set by read_line() on EOF and by set_closed() after quit()
 
 ### Pending Todos
 
@@ -142,5 +134,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-02
-Stopped at: Completed 04-02-PLAN.md — Pop3ClientBuilder with consuming-chain fluent API, smart port defaults (110/995), auto-auth via .credentials()/.apop(), feature-gated .tls()/.starttls(), 16 builder unit tests, 103 unit + 2 integration + 27 doc tests passing. cargo clippy and fmt clean. Phase 4 complete. Ready for Phase 5 (Pipelining).
+Stopped at: Completed 05-01-PLAN.md — BufWriter on Transport writer, pub(crate) reader/writer/timeout, Pop3Error::ConnectionClosed, is_closed()/set_closed() on Transport, is_closed() public on Pop3Client, quit() marks closed, 108 unit + 2 integration + 24 doc tests passing, clippy and fmt clean. Ready for 05-02 (batch pipelining methods).
 Resume file: None

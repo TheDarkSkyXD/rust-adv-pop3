@@ -70,7 +70,7 @@ Requirements for v3.0 release. Each maps to roadmap phases 5+.
 - [ ] **PIPE-02**: Client automatically detects pipelining support via CAPA after authentication
 - [ ] **PIPE-03**: Client falls back to sequential mode when server does not advertise PIPELINING
 - [ ] **PIPE-04**: Pipelined commands use a windowed send strategy to prevent TCP send-buffer deadlock
-- [ ] **PIPE-05**: Client provides batch methods (`retr_many`, `dele_many`) that pipeline automatically
+- [x] **PIPE-05**: Client provides batch methods (`retr_many`, `dele_many`) that pipeline automatically
 
 ### UIDL Caching
 
@@ -164,7 +164,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PIPE-02 | Phase 5 | Pending |
 | PIPE-03 | Phase 5 | Pending |
 | PIPE-04 | Phase 5 | Pending |
-| PIPE-05 | Phase 5 | Pending |
+| PIPE-05 | Phase 5 | Complete |
 | CACHE-01 | Phase 6 | Pending |
 | CACHE-02 | Phase 6 | Pending |
 | CACHE-03 | Phase 6 | Pending |
