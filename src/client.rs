@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::error::{Pop3Error, Result};
@@ -940,6 +941,206 @@ impl Pop3Client {
         self.require_auth()?;
         self.send_and_check("RSET").await?;
         Ok(())
+    }
+
+    // -------------------------------------------------------------------------
+    // Incremental Sync
+    // -------------------------------------------------------------------------
+
+    /// # Incremental Sync
+    ///
+    /// These methods provide a high-level API for incremental mailbox sync.
+    /// They operate on a caller-managed set of previously-seen unique IDs (UIDs).
+    /// The library never persists the seen set — that responsibility belongs to
+    /// the caller.
+    ///
+    /// **UIDL requirement:** All three methods use the `UIDL` command internally.
+    /// UIDL is optional in RFC 1939. If the server does not support it, these
+    /// methods return a `Pop3Error::ServerError`. Check `capa()` for the `UIDL`
+    /// capability if you need to verify support before calling.
+    /// Return UIDL entries for messages not in `seen`.
+    ///
+    /// Calls `UIDL` once and filters the result against the caller-supplied seen
+    /// set. Returns full [`UidlEntry`] values so callers have both the session
+    /// message number (`message_id`) and the stable unique ID (`unique_id`).
+    ///
+    /// # Errors
+    ///
+    /// - [`Pop3Error::NotAuthenticated`] — client has not logged in
+    /// - [`Pop3Error::ServerError`] — server does not support `UIDL`
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    /// use std::collections::HashSet;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///
+    ///     let seen: HashSet<String> = HashSet::new(); // load from persistence in practice
+    ///     let new_entries = client.unseen_uids(&seen).await?;
+    ///     for entry in &new_entries {
+    ///         println!("New message {}: UID {}", entry.message_id, entry.unique_id);
+    ///     }
+    ///
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn unseen_uids(&mut self, seen: &HashSet<String>) -> Result<Vec<UidlEntry>> {
+        let all = self.uidl(None).await?;
+        Ok(all
+            .into_iter()
+            .filter(|entry| !seen.contains(&entry.unique_id))
+            .collect())
+    }
+
+    /// Fetch full message content for messages not in `seen`.
+    ///
+    /// Calls [`unseen_uids`](Self::unseen_uids) to determine which messages are
+    /// new, then retrieves each one sequentially. Returns tuples of
+    /// `(UidlEntry, Message)` so callers can immediately add `entry.unique_id`
+    /// to their seen set after processing.
+    ///
+    /// This method does **not** mutate `seen` — the caller updates the set after
+    /// deciding which messages to mark as processed.
+    ///
+    /// Fails fast on the first retrieval error. No partial results are returned.
+    ///
+    /// # Errors
+    ///
+    /// - [`Pop3Error::NotAuthenticated`] — client has not logged in
+    /// - [`Pop3Error::ServerError`] — server does not support `UIDL`
+    /// - Any error from `RETR` for a specific message (propagated immediately)
+    ///
+    /// # Performance
+    ///
+    /// This method retrieves messages sequentially (one `RETR` per message). For
+    /// higher throughput on servers that advertise `PIPELINING`, use
+    /// [`unseen_uids`](Self::unseen_uids) to get the entry list, then pass the
+    /// message IDs to [`retr_many`](Self::retr_many) manually.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    /// use std::collections::HashSet;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///
+    ///     // In practice, load `seen` from disk (e.g. serde_json::from_str).
+    ///     let mut seen: HashSet<String> = HashSet::new();
+    ///
+    ///     let new_messages = client.fetch_unseen(&seen).await?;
+    ///     for (entry, msg) in &new_messages {
+    ///         println!("Message {}: {} bytes", entry.unique_id, msg.data.len());
+    ///         seen.insert(entry.unique_id.clone()); // update seen set
+    ///     }
+    ///
+    ///     // Persist `seen` back to disk (e.g. serde_json::to_string(&seen)).
+    ///
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn fetch_unseen(
+        &mut self,
+        seen: &HashSet<String>,
+    ) -> Result<Vec<(UidlEntry, Message)>> {
+        let new_entries = self.unseen_uids(seen).await?;
+        let mut results = Vec::with_capacity(new_entries.len());
+        for entry in new_entries {
+            let msg = self.retr(entry.message_id).await?;
+            results.push((entry, msg));
+        }
+        Ok(results)
+    }
+
+    /// Remove UIDs from `seen` that no longer exist on the server.
+    ///
+    /// Calls `UIDL` to fetch the server's current message list, then removes
+    /// any entry from `seen` whose UID is not present on the server. This
+    /// prevents ghost UIDs (from deleted or expired messages) from accumulating
+    /// in the seen set and incorrectly marking new messages as already-seen.
+    ///
+    /// Returns the list of pruned UIDs for logging or auditing. Mutates `seen`
+    /// in place.
+    ///
+    /// Call this after connecting and authenticating, before calling
+    /// [`fetch_unseen`](Self::fetch_unseen), to keep the seen set accurate.
+    ///
+    /// # UID Stability Caveat
+    ///
+    /// RFC 1939 says servers SHOULD NOT reuse UIDs, but does not mandate it.
+    /// This method assumes UID stability. A pathological server that reuses a
+    /// deleted UID for a new message would cause `prune_seen` to retain the old
+    /// UID, making the new message appear already-seen. This matches the
+    /// behavior of all major POP3 clients.
+    ///
+    /// # Errors
+    ///
+    /// - [`Pop3Error::NotAuthenticated`] — client has not logged in
+    /// - [`Pop3Error::ServerError`] — server does not support `UIDL`
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    /// use std::collections::HashSet;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///
+    ///     // Load seen set from persistent storage.
+    ///     // Example round-trip with serde_json (not a library dependency):
+    ///     //   let json = std::fs::read_to_string("seen.json").unwrap_or_default();
+    ///     //   let mut seen: HashSet<String> = serde_json::from_str(&json).unwrap_or_default();
+    ///     let mut seen: HashSet<String> = HashSet::new();
+    ///
+    ///     // Prune UIDs that no longer exist on the server.
+    ///     let pruned = client.prune_seen(&mut seen).await?;
+    ///     if !pruned.is_empty() {
+    ///         println!("Pruned {} ghost UIDs: {:?}", pruned.len(), pruned);
+    ///     }
+    ///
+    ///     // Fetch only new messages.
+    ///     let new_messages = client.fetch_unseen(&seen).await?;
+    ///     for (entry, _msg) in &new_messages {
+    ///         seen.insert(entry.unique_id.clone());
+    ///     }
+    ///
+    ///     // Persist seen set back to storage.
+    ///     //   let json = serde_json::to_string(&seen).unwrap();
+    ///     //   std::fs::write("seen.json", json).unwrap();
+    ///
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn prune_seen(&mut self, seen: &mut HashSet<String>) -> Result<Vec<String>> {
+        let server_entries = self.uidl(None).await?;
+        let server_uids: HashSet<&str> = server_entries
+            .iter()
+            .map(|e| e.unique_id.as_str())
+            .collect();
+        let mut pruned = Vec::new();
+        seen.retain(|uid| {
+            if server_uids.contains(uid.as_str()) {
+                true
+            } else {
+                pruned.push(uid.clone());
+                false
+            }
+        });
+        Ok(pruned)
     }
 
     /// Send a no-op command to keep the connection alive.
