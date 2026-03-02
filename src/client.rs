@@ -1278,6 +1278,114 @@ impl Pop3Client {
     }
 }
 
+// ── MIME integration (requires `mime` feature) ──────────────────────────
+
+#[cfg(feature = "mime")]
+impl Pop3Client {
+    /// Retrieve a message and parse it as a structured RFC 5322 / MIME object.
+    ///
+    /// Calls [`retr()`](Self::retr) internally, then feeds the raw bytes to
+    /// `mail-parser` for structured parsing.  Returns an owned
+    /// [`ParsedMessage`](crate::ParsedMessage) with no lifetime ties to the
+    /// client.
+    ///
+    /// # Errors
+    ///
+    /// - Any error that [`retr()`](Self::retr) can return (I/O, protocol,
+    ///   authentication).
+    /// - [`Pop3Error::MimeParse`] if the retrieved content cannot be parsed as
+    ///   a valid RFC 5322 message (e.g., no recognizable headers).  This means
+    ///   the network retrieval succeeded, but the content is not a valid email.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "mime")]
+    /// # async fn example() -> pop3::Result<()> {
+    /// use pop3::Pop3Client;
+    ///
+    /// let mut client = Pop3Client::connect(
+    ///     ("pop.example.com", 110),
+    ///     std::time::Duration::from_secs(30),
+    /// ).await?;
+    /// client.login("user", "pass").await?;
+    ///
+    /// let msg = client.retr_parsed(1).await?;
+    /// println!("Subject: {:?}", msg.subject());
+    /// println!("From: {:?}", msg.from());
+    /// println!("Body: {:?}", msg.body_text(0));
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn retr_parsed(
+        &mut self,
+        message_id: u32,
+    ) -> crate::Result<mail_parser::Message<'static>> {
+        let msg = self.retr(message_id).await?;
+        mail_parser::MessageParser::default()
+            .parse(msg.data.as_bytes())
+            .map(|m| m.into_owned())
+            .ok_or_else(|| {
+                Pop3Error::MimeParse(format!(
+                    "message {message_id} could not be parsed as RFC 5322"
+                ))
+            })
+    }
+
+    /// Retrieve message headers (and optionally N body lines) and parse them
+    /// as a structured RFC 5322 / MIME object.
+    ///
+    /// Calls [`top()`](Self::top) internally, then feeds the raw bytes to
+    /// `mail-parser`.
+    ///
+    /// **Note:** The TOP command returns all headers but only the first `lines`
+    /// lines of the message body (RFC 1939 Section 7).  The parsed message's
+    /// body may therefore be truncated or empty.  Use [`retr_parsed()`](Self::retr_parsed)
+    /// for the complete message.
+    ///
+    /// # Errors
+    ///
+    /// - Any error that [`top()`](Self::top) can return (I/O, protocol,
+    ///   authentication).
+    /// - [`Pop3Error::MimeParse`] if the retrieved content cannot be parsed as
+    ///   a valid RFC 5322 message.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "mime")]
+    /// # async fn example() -> pop3::Result<()> {
+    /// use pop3::Pop3Client;
+    ///
+    /// let mut client = Pop3Client::connect(
+    ///     ("pop.example.com", 110),
+    ///     std::time::Duration::from_secs(30),
+    /// ).await?;
+    /// client.login("user", "pass").await?;
+    ///
+    /// // Retrieve headers + first 0 body lines (headers only)
+    /// let msg = client.top_parsed(1, 0).await?;
+    /// println!("Subject: {:?}", msg.subject());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn top_parsed(
+        &mut self,
+        message_id: u32,
+        lines: u32,
+    ) -> crate::Result<mail_parser::Message<'static>> {
+        let msg = self.top(message_id, lines).await?;
+        mail_parser::MessageParser::default()
+            .parse(msg.data.as_bytes())
+            .map(|m| m.into_owned())
+            .ok_or_else(|| {
+                Pop3Error::MimeParse(format!(
+                    "message {message_id} could not be parsed as RFC 5322"
+                ))
+            })
+    }
+}
+
 /// Create an authenticated mock Pop3Client for use in tests outside this module.
 ///
 /// This is the `pub(crate)` counterpart to the module-private

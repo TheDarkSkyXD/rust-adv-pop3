@@ -77,6 +77,8 @@
 //! |---------|---------|-------------|
 //! | `rustls-tls` | Yes | TLS via rustls (pure Rust, no system deps) |
 //! | `openssl-tls` | No | TLS via OpenSSL (requires system libssl) |
+//! | `pool` | No | Connection pooling via bb8 for multi-account scenarios |
+//! | `mime` | No | Optional MIME parsing via mail-parser |
 //!
 //! Enable one TLS backend at a time. Both cannot be active simultaneously.
 //!
@@ -114,3 +116,6 @@ pub use types::{Capability, ListEntry, Message, SessionState, Stat, UidlEntry};
 pub use pool::{
     AccountKey, PoolConfig, PooledConnection, Pop3ConnectionManager, Pop3Pool, Pop3PoolError,
 };
+
+#[cfg(feature = "mime")]
+pub use types::ParsedMessage;
