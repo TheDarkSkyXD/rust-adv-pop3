@@ -70,16 +70,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-01)
 
 **Core value:** Provide a correct, async, production-quality POP3 client that handles errors gracefully instead of panicking
-**Current focus:** Phase 7 (Reconnection) IN PROGRESS — 07-01 done. Ready for 07-02 (command wrappers).
+**Current focus:** Phase 7 (Reconnection) COMPLETE — both 07-01 and 07-02 done. Ready for Phase 8 (Connection Pooling).
 
 ## Current Position
 
-Phase: 7 of 9 (Reconnection) — IN PROGRESS
-Plan: 1 of 2 in current phase (just completed 07-01)
-Status: 07-01 complete — Outcome<T> enum, ReconnectingClientBuilder, ReconnectingClient, connect_and_auth, is_retryable, do_reconnect, 15 unit tests, RECON-01/02/04 satisfied, backon=1.6 added.
-Last activity: 2026-03-02 — Completed 07-01 (Reconnection Foundation — Types and Retry Infrastructure)
+Phase: 7 of 9 (Reconnection) — COMPLETE
+Plan: 2 of 2 in current phase (07-02 just completed)
+Status: 07-02 complete — all 15 ReconnectingClient command wrappers, best-effort quit, read-only accessors, 7 new tests, RECON-01/02/03/04 all satisfied.
+Last activity: 2026-03-02 — Completed 07-02 (Reconnection Command Wrappers)
 
-Progress: [███████░░░] 72%
+Progress: [████████░░] 78%
 
 ## Performance Metrics
 
@@ -98,7 +98,7 @@ Progress: [███████░░░] 72%
 | 04-protocol-extensions | 2 of 2 completed | ~6 min | ~3 min |
 | 05-pipelining | 2 of 2 completed | ~8 min | ~4 min |
 | 06-uidl-caching | 1 of 1 completed | ~3 min | ~3 min |
-| 07-reconnection | 1 of 2 in progress | ~3 min | ~3 min |
+| 07-reconnection | 2 of 2 complete | ~7 min | ~4 min |
 
 **Recent Trend:**
 - Last 5 plans: ~4 min, ~2 min, ~4 min, ~3 min, ~3 min
@@ -181,6 +181,10 @@ Recent decisions affecting current work:
 - [Phase 07-01]: ReconnectCallback type alias for Option<Box<dyn FnMut(u32, &Pop3Error) + Send>> avoids clippy::type_complexity on both builder and client structs
 - [Phase 07-01]: is_retryable covers Io, ConnectionClosed, Timeout, SysTemp — AuthFailed excluded to prevent account lockout risk
 - [Phase 07-01]: Credentials passed to connect() not stored on builder — minimises time credentials exist in plain-text builder fields
+- [Phase 07-02]: fetch_unseen wraps Vec<(UidlEntry, Message)> — matches actual Pop3Client return type; plan template showed Vec<Message> which was incorrect
+- [Phase 07-02]: pub(crate) build_authenticated_mock_client added to client.rs — cleanest way to share mock construction across modules without exposing private Pop3Client struct fields
+- [Phase 07-02]: Full reconnect round-trip tests deferred to integration tests — do_reconnect() calls Pop3ClientBuilder::connect() requiring real TCP, not unit-testable
+- [Phase 07-02]: Best-effort quit silently swallows retryable errors — only non-transient errors propagate from ReconnectingClient::quit()
 
 ### Pending Todos
 
@@ -200,5 +204,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-02
-Stopped at: Completed 07-01-PLAN.md — Outcome<T> enum, ReconnectingClientBuilder, ReconnectingClient, connect_and_auth, is_retryable, do_reconnect with backon=1.6, 15 unit tests passing, RECON-01/02/04 satisfied, clippy and fmt clean. Phase 7 Plan 1 complete. Ready for 07-02 (command wrappers).
+Stopped at: Completed 07-02-PLAN.md — all 15 ReconnectingClient command wrappers, best-effort quit, read-only accessors, 7 new tests, 163 unit + 2 integration + 32 doc tests passing, RECON-01/02/03/04 all satisfied, clippy and fmt clean. Phase 7 complete. Ready for Phase 8 (Connection Pooling).
 Resume file: None
