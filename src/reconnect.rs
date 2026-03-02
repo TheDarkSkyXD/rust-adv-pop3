@@ -508,10 +508,7 @@ impl ReconnectingClient {
     /// Returns `Outcome::Reconnected(entries)` if the connection was dropped and
     /// re-established before this call returned. In that case, all pending
     /// DELE marks have been discarded.
-    pub async fn unseen_uids(
-        &mut self,
-        seen: &HashSet<String>,
-    ) -> Result<Outcome<Vec<UidlEntry>>> {
+    pub async fn unseen_uids(&mut self, seen: &HashSet<String>) -> Result<Outcome<Vec<UidlEntry>>> {
         match self.client.unseen_uids(seen).await {
             Ok(v) => Ok(Outcome::Fresh(v)),
             Err(e) if is_retryable(&e) => {
@@ -548,10 +545,7 @@ impl ReconnectingClient {
     /// Returns `Outcome::Reconnected(pruned)` if the connection was dropped and
     /// re-established before this call returned. In that case, all pending
     /// DELE marks have been discarded.
-    pub async fn prune_seen(
-        &mut self,
-        seen: &mut HashSet<String>,
-    ) -> Result<Outcome<Vec<String>>> {
+    pub async fn prune_seen(&mut self, seen: &mut HashSet<String>) -> Result<Outcome<Vec<String>>> {
         match self.client.prune_seen(seen).await {
             Ok(v) => Ok(Outcome::Fresh(v)),
             Err(e) if is_retryable(&e) => {
@@ -772,6 +766,23 @@ mod tests {
         assert!(Outcome::<u32>::Reconnected(0).is_reconnected());
     }
 
+    // --- Supplemental is_retryable coverage ---
+
+    #[test]
+    fn is_retryable_sys_perm_false() {
+        assert!(!is_retryable(&Pop3Error::SysPerm("x".into())));
+    }
+
+    #[test]
+    fn is_retryable_login_delay_false() {
+        assert!(!is_retryable(&Pop3Error::LoginDelay("x".into())));
+    }
+
+    #[test]
+    fn is_retryable_not_authenticated_false() {
+        assert!(!is_retryable(&Pop3Error::NotAuthenticated));
+    }
+
     // --- ReconnectingClientBuilder defaults ---
 
     #[test]
@@ -781,5 +792,151 @@ mod tests {
         assert_eq!(builder.initial_delay, Duration::from_secs(1));
         assert_eq!(builder.max_delay, Duration::from_secs(30));
         assert!(builder.jitter);
+    }
+
+    // --- ReconnectingClient method-level tests ---
+    //
+    // These tests verify the Fresh path (first call succeeds, no reconnect) and
+    // the non-retryable error path (ServerError propagates immediately).
+    //
+    // The full reconnect path (transient I/O error -> do_reconnect() -> Reconnected(T))
+    // requires either a test double for the Pop3ClientBuilder or a mock server that
+    // supports multiple connection rounds. That is out of scope for unit tests because
+    // do_reconnect() calls Pop3ClientBuilder::connect() which opens a real TCP socket.
+    //
+    // TODO: integration test reconnect round-trip — exercise the full Io error ->
+    // reconnect -> Reconnected path via a mock TCP server in tests/integration.rs.
+
+    fn make_mock_client(mock: tokio_test::io::Mock) -> Pop3Client {
+        // Delegate to the pub(crate) test helper in client.rs.
+        crate::client::build_authenticated_mock_client(mock)
+    }
+
+    #[tokio::test]
+    async fn stat_fresh_on_success() {
+        // Mock a successful STAT response — expect Fresh variant returned.
+        let mock = tokio_test::io::Builder::new()
+            .write(b"STAT\r\n")
+            .read(b"+OK 3 512\r\n")
+            .build();
+        let inner = make_mock_client(mock);
+        let mut rc = ReconnectingClient::new_for_test(
+            inner,
+            Pop3ClientBuilder::new("localhost"),
+            "user",
+            "pass",
+        );
+        let outcome = rc.stat().await.expect("stat should succeed");
+        assert!(
+            !outcome.is_reconnected(),
+            "no reconnect should have occurred"
+        );
+        let stat = outcome.into_inner();
+        assert_eq!(stat.message_count, 3);
+        assert_eq!(stat.mailbox_size, 512);
+    }
+
+    #[tokio::test]
+    async fn stat_propagates_server_error_immediately() {
+        // Mock a -ERR server response — non-retryable, should propagate as ServerError.
+        let mock = tokio_test::io::Builder::new()
+            .write(b"STAT\r\n")
+            .read(b"-ERR permission denied\r\n")
+            .build();
+        let inner = make_mock_client(mock);
+        let mut rc = ReconnectingClient::new_for_test(
+            inner,
+            Pop3ClientBuilder::new("localhost"),
+            "user",
+            "pass",
+        );
+        let err = rc.stat().await.expect_err("should propagate ServerError");
+        assert!(
+            matches!(err, Pop3Error::ServerError(_)),
+            "expected ServerError, got: {:?}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn dele_fresh_on_success() {
+        // Mock a successful DELE response — expect Fresh(()) returned.
+        let mock = tokio_test::io::Builder::new()
+            .write(b"DELE 1\r\n")
+            .read(b"+OK message deleted\r\n")
+            .build();
+        let inner = make_mock_client(mock);
+        let mut rc = ReconnectingClient::new_for_test(
+            inner,
+            Pop3ClientBuilder::new("localhost"),
+            "user",
+            "pass",
+        );
+        let outcome = rc.dele(1).await.expect("dele should succeed");
+        assert!(
+            !outcome.is_reconnected(),
+            "no reconnect should have occurred"
+        );
+        assert_eq!(outcome.into_inner(), ());
+    }
+
+    #[tokio::test]
+    async fn noop_fresh_on_success() {
+        // Verify NOOP returns Outcome::Fresh(()) when successful.
+        let mock = tokio_test::io::Builder::new()
+            .write(b"NOOP\r\n")
+            .read(b"+OK\r\n")
+            .build();
+        let inner = make_mock_client(mock);
+        let mut rc = ReconnectingClient::new_for_test(
+            inner,
+            Pop3ClientBuilder::new("localhost"),
+            "user",
+            "pass",
+        );
+        let outcome = rc.noop().await.expect("noop should succeed");
+        assert!(!outcome.is_reconnected());
+    }
+
+    #[tokio::test]
+    async fn accessor_state_delegates_to_inner() {
+        // Verify that is_encrypted, state, is_closed, supports_pipelining
+        // delegate correctly to the inner client.
+        use crate::types::SessionState;
+        let mock = tokio_test::io::Builder::new().build();
+        let inner = make_mock_client(mock);
+        let rc = ReconnectingClient::new_for_test(
+            inner,
+            Pop3ClientBuilder::new("localhost"),
+            "user",
+            "pass",
+        );
+        assert_eq!(rc.state(), SessionState::Authenticated);
+        assert!(!rc.is_encrypted());
+        assert!(!rc.is_closed());
+        assert!(!rc.supports_pipelining());
+        assert_eq!(rc.greeting(), "");
+    }
+
+    #[tokio::test]
+    async fn quit_silently_succeeds_on_dead_connection() {
+        // When quit() encounters ConnectionClosed (best-effort), it returns Ok(()).
+        // We simulate a dead connection by providing a mock with no read data,
+        // causing ConnectionClosed on the QUIT response read.
+        let mock = tokio_test::io::Builder::new().write(b"QUIT\r\n").build();
+        let inner = make_mock_client(mock);
+        let rc = ReconnectingClient::new_for_test(
+            inner,
+            Pop3ClientBuilder::new("localhost"),
+            "user",
+            "pass",
+        );
+        // QUIT sends the command but the mock EOF causes ConnectionClosed;
+        // ReconnectingClient::quit() ignores it and returns Ok(()).
+        let result = rc.quit().await;
+        assert!(
+            result.is_ok(),
+            "quit should silently succeed on dead connection"
+        );
     }
 }

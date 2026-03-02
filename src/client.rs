@@ -1278,6 +1278,22 @@ impl Pop3Client {
     }
 }
 
+/// Create an authenticated mock Pop3Client for use in tests outside this module.
+///
+/// This is the `pub(crate)` counterpart to the module-private
+/// `build_authenticated_test_client` helper. Used by reconnect.rs tests to
+/// inject a mock Pop3Client into ReconnectingClient::new_for_test.
+#[cfg(test)]
+pub(crate) fn build_authenticated_mock_client(mock: tokio_test::io::Mock) -> Pop3Client {
+    let transport = Transport::mock(mock);
+    Pop3Client {
+        transport,
+        greeting: String::new(),
+        state: SessionState::Authenticated,
+        is_pipelining: false,
+    }
+}
+
 #[cfg(test)]
 fn build_test_client(mock: tokio_test::io::Mock) -> Pop3Client {
     let transport = Transport::mock(mock);
