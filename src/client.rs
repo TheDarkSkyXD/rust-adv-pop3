@@ -27,6 +27,7 @@ pub struct Pop3Client {
     transport: Transport,
     greeting: String,
     state: SessionState,
+    is_pipelining: bool,
 }
 
 /// Check that a string does not contain CR or LF (CRLF injection protection).
@@ -93,6 +94,7 @@ impl Pop3Client {
             transport,
             greeting: greeting_text.to_string(),
             state: SessionState::Connected,
+            is_pipelining: false,
         })
     }
 
@@ -160,6 +162,7 @@ impl Pop3Client {
             transport,
             greeting: greeting_text.to_string(),
             state: SessionState::Connected,
+            is_pipelining: false,
         })
     }
 
@@ -285,6 +288,37 @@ impl Pop3Client {
         self.transport.is_closed()
     }
 
+    /// Returns `true` if the server advertised the `PIPELINING` capability.
+    ///
+    /// Pipelining is detected automatically by probing the server's CAPA
+    /// response after successful authentication. When pipelining is
+    /// supported, batch methods like [`retr_many()`](Self::retr_many) and
+    /// [`dele_many()`](Self::dele_many) send multiple commands before
+    /// reading responses, significantly improving throughput.
+    ///
+    /// When pipelining is not supported, the batch methods transparently
+    /// fall back to sequential execution (one command at a time).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///     if client.supports_pipelining() {
+    ///         println!("Server supports pipelining!");
+    ///     }
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn supports_pipelining(&self) -> bool {
+        self.is_pipelining
+    }
+
     /// Upgrade the connection to TLS via the STLS command (POP3 STARTTLS).
     ///
     /// Must be called before authentication — STLS is only valid in the
@@ -378,6 +412,12 @@ impl Pop3Client {
 
         // Only set authenticated after both commands succeed
         self.state = SessionState::Authenticated;
+
+        // Probe CAPA for PIPELINING support (PIPE-02).
+        // Don't propagate CAPA errors -- not all servers support CAPA (RFC 1939).
+        let caps = self.capa().await.unwrap_or_default();
+        self.is_pipelining = caps.iter().any(|c| c.name == "PIPELINING");
+
         Ok(())
     }
 
@@ -443,6 +483,11 @@ impl Pop3Client {
         })?;
 
         self.state = SessionState::Authenticated;
+
+        // Probe CAPA for PIPELINING support (PIPE-02).
+        let caps = self.capa().await.unwrap_or_default();
+        self.is_pipelining = caps.iter().any(|c| c.name == "PIPELINING");
+
         Ok(())
     }
 
@@ -786,6 +831,7 @@ fn build_test_client(mock: tokio_test::io::Mock) -> Pop3Client {
         transport,
         greeting: String::new(),
         state: SessionState::Connected,
+        is_pipelining: false,
     }
 }
 
@@ -796,6 +842,18 @@ fn build_authenticated_test_client(mock: tokio_test::io::Mock) -> Pop3Client {
         transport,
         greeting: String::new(),
         state: SessionState::Authenticated,
+        is_pipelining: false,
+    }
+}
+
+#[cfg(test)]
+fn build_authenticated_test_client_with_pipelining(mock: tokio_test::io::Mock) -> Pop3Client {
+    let transport = Transport::mock(mock);
+    Pop3Client {
+        transport,
+        greeting: String::new(),
+        state: SessionState::Authenticated,
+        is_pipelining: true,
     }
 }
 
@@ -806,6 +864,7 @@ fn build_test_client_with_greeting(mock: tokio_test::io::Mock, greeting: &str) -
         transport,
         greeting: greeting.to_string(),
         state: SessionState::Connected,
+        is_pipelining: false,
     }
 }
 
@@ -899,6 +958,10 @@ mod tests {
             .read(b"+OK\r\n")
             .write(b"PASS pass\r\n")
             .read(b"+OK logged in\r\n")
+            // CAPA probe after successful login
+            .write(b"CAPA\r\n")
+            .read(b"+OK\r\n")
+            .read(b".\r\n")
             .build();
         let mut client = build_test_client(mock);
         assert_eq!(client.state(), SessionState::Connected);
@@ -952,6 +1015,10 @@ mod tests {
             .read(b"+OK\r\n")
             .write(b"PASS secret\r\n")
             .read(b"+OK logged in\r\n")
+            // CAPA probe after successful login
+            .write(b"CAPA\r\n")
+            .read(b"+OK\r\n")
+            .read(b".\r\n")
             .build();
         let mut client = build_test_client(mock);
         let result = client.login("alice", "secret").await;
@@ -1285,6 +1352,10 @@ mod tests {
             .read(b"+OK\r\n")
             .write(b"PASS secret\r\n")
             .read(b"+OK logged in\r\n")
+            // CAPA probe after successful login
+            .write(b"CAPA\r\n")
+            .read(b"+OK\r\n")
+            .read(b".\r\n")
             .write(b"STAT\r\n")
             .read(b"+OK 2 5000\r\n")
             .write(b"LIST\r\n")
@@ -1330,6 +1401,12 @@ mod tests {
             .read(b"+OK\r\n")
             .write(b"PASS pass123\r\n")
             .read(b"+OK welcome\r\n")
+            // CAPA probe after successful login (no PIPELINING in this server)
+            .write(b"CAPA\r\n")
+            .read(b"+OK\r\n")
+            .read(b"TOP\r\n")
+            .read(b"UIDL\r\n")
+            .read(b".\r\n")
             // TOP
             .write(b"TOP 1 3\r\n")
             .read(b"+OK\r\nFrom: sender@example.com\r\nSubject: Test\r\n\r\nLine 1\r\nLine 2\r\nLine 3\r\n.\r\n")
@@ -1367,6 +1444,10 @@ mod tests {
             .read(b"+OK\r\n")
             .write(b"PASS pass\r\n")
             .read(b"+OK\r\n")
+            // CAPA probe after successful login
+            .write(b"CAPA\r\n")
+            .read(b"+OK\r\n")
+            .read(b".\r\n")
             // UIDL all
             .write(b"UIDL\r\n")
             .read(b"+OK\r\n1 msg-aaa\r\n2 msg-bbb\r\n3 msg-ccc\r\n.\r\n")
@@ -1531,6 +1612,10 @@ mod tests {
         let mock = Builder::new()
             .write(b"APOP mrose c4c9334bac560ecc979e58001b3e22fb\r\n")
             .read(b"+OK mastrstrmt mastrstrmt is strstrmt\r\n")
+            // CAPA probe after successful apop
+            .write(b"CAPA\r\n")
+            .read(b"+OK\r\n")
+            .read(b".\r\n")
             .build();
         let mut client = build_test_client_with_greeting(
             mock,
@@ -1659,5 +1744,69 @@ mod tests {
         // RFC 1939 section 7 test vector
         let digest = compute_apop_digest("<1896.697170952@dbc.mtview.ca.us>", "tanstaaf");
         assert_eq!(digest, "c4c9334bac560ecc979e58001b3e22fb");
+    }
+
+    // --- Pipelining detection tests (PIPE-02) ---
+
+    #[tokio::test]
+    async fn pipelining_detected_via_capa() {
+        let mock = Builder::new()
+            .write(b"USER user\r\n")
+            .read(b"+OK\r\n")
+            .write(b"PASS pass\r\n")
+            .read(b"+OK logged in\r\n")
+            // CAPA probe after login
+            .write(b"CAPA\r\n")
+            .read(b"+OK\r\n")
+            .read(b"TOP\r\n")
+            .read(b"UIDL\r\n")
+            .read(b"PIPELINING\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_test_client(mock);
+        client.login("user", "pass").await.unwrap();
+        assert!(client.supports_pipelining());
+    }
+
+    #[tokio::test]
+    async fn pipelining_not_detected_without_capa_entry() {
+        let mock = Builder::new()
+            .write(b"USER user\r\n")
+            .read(b"+OK\r\n")
+            .write(b"PASS pass\r\n")
+            .read(b"+OK logged in\r\n")
+            // CAPA probe after login -- no PIPELINING
+            .write(b"CAPA\r\n")
+            .read(b"+OK\r\n")
+            .read(b"TOP\r\n")
+            .read(b"UIDL\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_test_client(mock);
+        client.login("user", "pass").await.unwrap();
+        assert!(!client.supports_pipelining());
+    }
+
+    #[tokio::test]
+    async fn pipelining_false_when_capa_fails() {
+        let mock = Builder::new()
+            .write(b"USER user\r\n")
+            .read(b"+OK\r\n")
+            .write(b"PASS pass\r\n")
+            .read(b"+OK logged in\r\n")
+            // CAPA probe fails -- server doesn't support CAPA
+            .write(b"CAPA\r\n")
+            .read(b"-ERR command not supported\r\n")
+            .build();
+        let mut client = build_test_client(mock);
+        client.login("user", "pass").await.unwrap();
+        assert!(!client.supports_pipelining());
+    }
+
+    #[test]
+    fn supports_pipelining_false_before_login() {
+        let mock = Builder::new().build();
+        let client = build_test_client(mock);
+        assert!(!client.supports_pipelining());
     }
 }
