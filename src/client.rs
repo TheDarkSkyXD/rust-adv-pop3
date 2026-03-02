@@ -260,6 +260,31 @@ impl Pop3Client {
         self.transport.is_encrypted()
     }
 
+    /// Returns `true` if the connection is known to be closed.
+    ///
+    /// This flag is set when the server closes the connection (EOF) or
+    /// after [`quit()`](Self::quit) completes. It is not a live probe --
+    /// a connection that has been silently dropped by the server without
+    /// sending EOF will still return `false`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     assert!(!client.is_closed());
+    ///     client.quit().await?;
+    ///     // client is consumed by quit() -- cannot check is_closed() after
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn is_closed(&self) -> bool {
+        self.transport.is_closed()
+    }
+
     /// Upgrade the connection to TLS via the STLS command (POP3 STARTTLS).
     ///
     /// Must be called before authentication — STLS is only valid in the
@@ -675,6 +700,7 @@ impl Pop3Client {
         this.transport.send_command("QUIT").await?;
         let line = this.transport.read_line().await?;
         response::parse_status_line(&line)?;
+        this.transport.set_closed();
         Ok(())
         // `this` is dropped here, TCP connection closes
     }
@@ -825,6 +851,25 @@ mod tests {
         let mock = Builder::new().build();
         let client = build_authenticated_test_client(mock);
         assert!(!client.is_encrypted());
+    }
+
+    // --- is_closed: tracks connection closed state ---
+
+    #[test]
+    fn is_closed_false_on_new_client() {
+        let mock = Builder::new().build();
+        let client = build_test_client(mock);
+        assert!(!client.is_closed());
+    }
+
+    #[tokio::test]
+    async fn is_closed_true_after_eof() {
+        // Write STAT\r\n, then return EOF on the read (no read data)
+        let mock = Builder::new().write(b"STAT\r\n").build();
+        let mut client = build_authenticated_test_client(mock);
+        let result = client.stat().await;
+        assert!(result.is_err());
+        assert!(client.is_closed());
     }
 
     // --- FIX-01: rset() must send "RSET\r\n", not "RETR\r\n" ---

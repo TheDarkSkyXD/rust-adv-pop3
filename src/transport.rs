@@ -246,13 +246,11 @@ impl Transport {
     ///
     /// This is set when `read_line()` receives EOF or when `quit()` completes.
     /// It is NOT a live TCP probe -- it tracks known-closed state only.
-    #[allow(dead_code)] // Used by Pop3Client::is_closed() in client.rs (Task 2)
     pub(crate) fn is_closed(&self) -> bool {
         self.is_closed
     }
 
     /// Mark the transport as closed (called by quit() after successful QUIT).
-    #[allow(dead_code)] // Used by Pop3Client::quit() in client.rs (Task 2)
     pub(crate) fn set_closed(&mut self) {
         self.is_closed = true;
     }
