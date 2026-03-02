@@ -74,9 +74,9 @@ Requirements for v3.0 release. Each maps to roadmap phases 5+.
 
 ### UIDL Caching
 
-- [ ] **CACHE-01**: Client provides an API to filter the UIDL list against a set of previously-seen UIDs
-- [ ] **CACHE-02**: Client provides a `fetch_new()` convenience method returning only unseen messages
-- [ ] **CACHE-03**: UIDL cache reconciliation prunes ghost entries (UIDs no longer on server) on each connect
+- [x] **CACHE-01**: Client provides an API to filter the UIDL list against a set of previously-seen UIDs
+- [x] **CACHE-02**: Client provides a `fetch_new()` convenience method returning only unseen messages
+- [x] **CACHE-03**: UIDL cache reconciliation prunes ghost entries (UIDs no longer on server) on each connect
 
 ### Reconnection
 
@@ -165,9 +165,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PIPE-03 | Phase 5 | Complete (05-02) |
 | PIPE-04 | Phase 5 | Complete (05-02) |
 | PIPE-05 | Phase 5 | Complete (05-02) |
-| CACHE-01 | Phase 6 | Pending |
-| CACHE-02 | Phase 6 | Pending |
-| CACHE-03 | Phase 6 | Pending |
+| CACHE-01 | Phase 6 | Complete |
+| CACHE-02 | Phase 6 | Complete |
+| CACHE-03 | Phase 6 | Complete |
 | RECON-01 | Phase 7 | Pending |
 | RECON-02 | Phase 7 | Pending |
 | RECON-03 | Phase 7 | Pending |
