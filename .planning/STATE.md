@@ -3,6 +3,19 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: milestone
 status: unknown
+last_updated: "2026-03-02T04:00:38.639Z"
+progress:
+  total_phases: 9
+  completed_phases: 8
+  total_plans: 19
+  completed_plans: 19
+---
+
+---
+gsd_state_version: 1.0
+milestone: v2.0
+milestone_name: milestone
+status: unknown
 last_updated: "2026-03-02T03:52:32.077Z"
 progress:
   total_phases: 9
@@ -96,16 +109,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-01)
 
 **Core value:** Provide a correct, async, production-quality POP3 client that handles errors gracefully instead of panicking
-**Current focus:** Phase 8 (Connection Pooling) — 08-01 complete. Ready for 08-02 (Pop3Pool registry struct).
+**Current focus:** Phase 9 (MIME Integration) — Phase 8 complete. Ready for 09-01.
 
 ## Current Position
 
-Phase: 8 of 9 (Connection Pooling) — In Progress
-Plan: 1 of 2 in current phase (08-01 just completed)
-Status: 08-01 complete — bb8 pool foundation with AccountKey, Pop3ConnectionManager, Pop3PoolError; 13 tests passing, POOL-01/POOL-02 satisfied.
-Last activity: 2026-03-02 — Completed 08-01 (Connection Pooling Foundation)
+Phase: 8 of 9 (Connection Pooling) — Complete
+Plan: 2 of 2 in current phase (08-02 just completed)
+Status: Phase 8 complete — Pop3Pool registry, PoolConfig, PooledConnection alias, RFC 1939 rustdoc, lib.rs re-exports; 25 pool tests passing, all POOL requirements satisfied.
+Last activity: 2026-03-02 — Completed 08-02 (Pop3Pool Registry)
 
-Progress: [████████░░] 83%
+Progress: [█████████░] 94%
 
 ## Performance Metrics
 
@@ -125,7 +138,7 @@ Progress: [████████░░] 83%
 | 05-pipelining | 2 of 2 completed | ~8 min | ~4 min |
 | 06-uidl-caching | 1 of 1 completed | ~3 min | ~3 min |
 | 07-reconnection | 2 of 2 complete | ~7 min | ~4 min |
-| 08-connection-pooling | 1 of 2 in progress | ~5 min | ~5 min |
+| 08-connection-pooling | 2 of 2 complete | ~9 min | ~5 min |
 
 **Recent Trend:**
 - Last 5 plans: ~4 min, ~2 min, ~4 min, ~3 min, ~5 min
@@ -135,6 +148,7 @@ Progress: [████████░░] 83%
 | Phase 06 P01 | 3 | 2 tasks | 1 files |
 | Phase 07-reconnection P01 | 3 | 2 tasks | 3 files |
 | Phase 08-connection-pooling P01 | 5 | 2 tasks | 3 files |
+| Phase 08-connection-pooling P02 | 4 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -216,6 +230,9 @@ Recent decisions affecting current work:
 - [Phase 08-connection-pooling]: bb8 added with default-features=false to disable parking_lot (dlltool.exe Windows GNU constraint)
 - [Phase 08-connection-pooling]: Pop3PoolError separate from Pop3Error — pool-level errors conceptually distinct from POP3 protocol errors
 - [Phase 08-connection-pooling]: is_valid() returns conn.noop() directly — avoids redundant async block and lifetime annotation issues
+- [Phase 08-connection-pooling]: std::sync::RwLock used for pool registry (not tokio RwLock) — never held across await, allows synchronous add_account/remove_account
+- [Phase 08-connection-pooling]: checkout() uses get_owned() returning PooledConnection<'static> — Arc cloned before lock released, allowing 'static lifetime without holding read lock across await
+- [Phase 08-connection-pooling]: #[tokio::test] required for tests calling add_account — bb8 build_unchecked starts internal Tokio interval timer requiring runtime context
 
 ### Pending Todos
 
@@ -235,5 +252,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-02
-Stopped at: Completed 08-01-PLAN.md — bb8 pool foundation with AccountKey (Hash+Eq), Pop3ConnectionManager (bb8::ManageConnection), Pop3PoolError (CheckoutTimeout/Connection); 13 unit tests passing, POOL-01/POOL-02 satisfied, clippy and fmt clean. Ready for 08-02 (Pop3Pool registry struct).
+Stopped at: Completed 08-02-PLAN.md — Pop3Pool registry struct with PoolConfig, PooledConnection alias, checkout/add_account/remove_account/accounts API; RFC 1939 rustdoc; lib.rs re-exports behind pool feature; 25 pool tests passing. Phase 8 (Connection Pooling) complete. Ready for Phase 9 (MIME Integration).
 Resume file: None

@@ -89,7 +89,7 @@ Requirements for v3.0 release. Each maps to roadmap phases 5+.
 
 - [x] **POOL-01**: Client provides a connection pool for multi-account scenarios via `bb8`
 - [x] **POOL-02**: Pool enforces max 1 connection per mailbox (RFC 1939 exclusive lock)
-- [ ] **POOL-03**: Pool documentation prominently warns that POP3 forbids concurrent access to the same mailbox
+- [x] **POOL-03**: Pool documentation prominently warns that POP3 forbids concurrent access to the same mailbox
 
 ### MIME Integration
 
@@ -174,7 +174,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | RECON-04 | Phase 7 | Complete |
 | POOL-01 | Phase 8 | Complete |
 | POOL-02 | Phase 8 | Complete |
-| POOL-03 | Phase 8 | Pending |
+| POOL-03 | Phase 8 | Complete |
 | MIME-01 | Phase 9 | Pending |
 | MIME-02 | Phase 9 | Pending |
 
