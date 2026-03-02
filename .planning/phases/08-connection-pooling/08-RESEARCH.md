@@ -512,3 +512,533 @@ pub struct Pop3Pool { ... }
 
 **Research date:** 2026-03-01
 **Valid until:** 2026-06-01 (bb8 is stable; unlikely to change in 90 days; re-verify if Rust edition or async trait syntax changes)
+
+---
+
+## Supplement: Pool Lifecycle Management
+
+**Researched:** 2026-03-01
+**Domain:** bb8 shutdown semantics, reaper internals, account removal safety, Tokio runtime teardown, POP3-specific lifecycle
+**Confidence:** HIGH (bb8 source verified from github.com/djc/bb8; Tokio runtime drop behavior from official docs.rs; RFC 1939 text quoted directly)
+
+---
+
+### 1. Pool Shutdown and Graceful Cleanup
+
+#### How bb8::Pool Cleans Up When Dropped
+
+bb8 does **not** implement a custom `Drop` for `Pool<M>`. When the last `Arc<Pool<M>>` (or `Pool<M>` itself, which wraps `Arc<SharedPool<M>>`) is dropped, Rust's default destructor fires and the `SharedPool<M>` is freed. This means:
+
+- All idle connections stored inside `SharedPool` are dropped in place.
+- `Drop` on a `Pop3Client` does **not** send QUIT. It simply closes the TCP stream.
+- No QUIT command is ever sent to the server as a result of pool drop alone.
+
+**This is intentional and correct for the error/abrupt-teardown case.** RFC 1939 states:
+
+> "If a session terminates for some reason other than a client-issued QUIT command, the POP3 session does NOT enter the UPDATE state and MUST not remove any messages from the maildrop."
+
+Abrupt TCP close (no QUIT) preserves all pending DELE marks as not-applied. This is the safe default.
+
+#### The Reaper's Self-Terminating Design (Weak Reference)
+
+The reaper task is spawned with a `Weak<SharedPool<M>>` reference, not a strong `Arc`. The reaper's run loop is:
+
+```rust
+// Source: github.com/djc/bb8/blob/main/bb8/src/inner.rs
+async fn run(mut self) {
+    loop {
+        let _ = self.interval.tick().await;
+        let pool = match self.pool.upgrade() {
+            Some(inner) => PoolInner { inner },
+            None => break,   // All Arc<SharedPool> are gone — self-terminate
+        };
+        let approvals = pool.inner.reap();
+        pool.spawn_replenishing_approvals(approvals);
+    }
+}
+```
+
+**Key consequence:** When the last `Arc<SharedPool<M>>` is dropped (the `Pool<M>` and all clones of it go away), `Weak::upgrade()` returns `None` on the reaper's next tick, and the reaper task exits cleanly. No manual cancellation is needed. The reaper is self-terminating by design.
+
+#### The `Pop3Pool` Registry Drop Chain
+
+If `Pop3Pool` is dropped (or all `Arc<Pop3Pool>` references are released):
+1. `DashMap<AccountKey, Arc<bb8::Pool<Pop3ConnectionManager>>>` is dropped.
+2. Each `Arc<bb8::Pool<Pop3ConnectionManager>>` loses one reference. If no caller holds a checkout guard (which holds an `Arc<Pool>` via `get_owned()` or a lifetime-bound borrow), the `Arc` count reaches zero.
+3. `SharedPool<M>` is freed, dropping all idle `Pop3Client` connections (TCP streams closed, no QUIT).
+4. On the next reaper tick for each inner pool, `Weak::upgrade()` returns `None`, and the reaper task exits.
+
+If a caller **does** hold a checkout guard, the `Arc<SharedPool<M>>` survives until that guard is dropped. This is safe — the connection continues to be valid, the pool just no longer accepts new checkouts from the registry level.
+
+#### Should Pop3Pool Have an Explicit `shutdown()` Method?
+
+**Yes, for intentional graceful teardown.** The `shutdown()` method should:
+1. Remove all entries from the DashMap registry (so no new checkouts can happen).
+2. Iterate the pools and — for each pool where a connection is currently idle — check it out briefly and call `quit()` on it.
+3. Drop all the pools, releasing the `Arc<SharedPool<M>>` for each.
+
+This is the only way to ensure QUIT is sent before the TCP connection closes, which is the correct behavior for intentional application shutdown.
+
+**Recommended API:**
+
+```rust
+impl Pop3Pool {
+    /// Gracefully shut down all pooled connections.
+    ///
+    /// For each account with an idle connection, sends QUIT to the POP3 server
+    /// before closing the TCP stream. This enters the POP3 UPDATE state on the
+    /// server side, committing any pending DELE marks.
+    ///
+    /// Connections that are currently checked out are not waited on — they will
+    /// be closed (without QUIT) when their checkout guard is dropped, because the
+    /// pool is no longer available to receive them back.
+    ///
+    /// After this method returns, `get()` will return `Pop3PoolError::PoolShutDown`
+    /// for all subsequent calls.
+    pub async fn shutdown(&self) {
+        // Step 1: drain the registry so no new checkouts can start
+        let pools: Vec<Arc<bb8::Pool<Pop3ConnectionManager>>> =
+            self.pools.iter().map(|e| Arc::clone(e.value())).collect();
+        self.pools.clear();
+
+        // Step 2: for each inner pool, attempt to get the idle connection
+        // and send QUIT. If get() fails (connection in use or timed out), skip.
+        for pool in pools {
+            // Try non-blocking checkout — if busy, just drop and let the OS close
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                pool.get()
+            ).await {
+                Ok(Ok(mut conn)) => {
+                    let _ = conn.quit().await;  // best-effort; ignore error
+                }
+                _ => {} // connection in use or timeout — just drop
+            }
+        }
+        // Step 3: Arcs go out of scope → SharedPool freed → reaper self-terminates
+    }
+}
+```
+
+**Prescriptive decision:** Implement `Pop3Pool::shutdown()`. Document that applications **must** call it before exiting if they want QUIT to be sent. Do **not** implement `Drop` with blocking I/O — async I/O in `Drop` is not supported in Rust. The `Drop` impl should only do cleanup of in-memory state (clearing the DashMap). The POP3 QUIT is inherently async and must be driven by an explicit `shutdown()` call.
+
+#### Should Pop3ConnectionManager Implement a Custom Drop?
+
+**No.** `Pop3ConnectionManager` does not hold a live connection — it holds credentials and config for creating connections. The manager itself has nothing to clean up. The connection lifecycle is owned by bb8's `SharedPool` internals.
+
+`Pop3Client` dropping a TCP stream without QUIT is correct for the error case (RFC 1939 mandates no UPDATE state, so messages are not deleted). Only intentional shutdown needs QUIT, and that is handled by `Pop3Pool::shutdown()`.
+
+---
+
+### 2. Removing Accounts from the Registry
+
+#### Should Pop3Pool Support `remove_account(key)`?
+
+**Yes, with important safety semantics.** Use cases: an account is being deleted from the application, credentials are being rotated, or the operator wants to force a pool reset for one account.
+
+#### What Happens to In-Flight Checkouts
+
+When `remove_account(key)` removes an entry from the DashMap:
+- The DashMap entry's `Arc<bb8::Pool<Pop3ConnectionManager>>` loses one reference count.
+- If a caller currently holds a checkout guard (`PooledConnection<'_, M>` or a `get_owned()` result), that guard holds a reference to the pool (either a lifetime-bound borrow keeping the `Arc` alive, or an owned clone via `get_owned()`). The `Arc` count does **not** reach zero.
+- The checked-out connection remains valid and usable for the caller who holds it.
+- When the caller drops the checkout guard, `put_back()` is called, which tries to return the connection to the pool. At this point, if the pool `Arc` was the only remaining one, the pool is freed. If other clones exist (from other checkout guards or concurrent `get()` calls in progress), the pool survives until those are also released.
+
+**This is safe.** Rust's `Arc<T>` reference counting ensures the pool is not freed while any holder has a reference. There is no use-after-free risk.
+
+#### Should Removal Wait Until All Checkouts Are Returned?
+
+**No — not by default.** Waiting would require an async barrier synchronized with bb8's internal refcount, which bb8 does not expose. The safe pattern is:
+
+```rust
+impl Pop3Pool {
+    /// Remove an account's pool from the registry.
+    ///
+    /// Any currently-checked-out connection for this account remains valid
+    /// until the caller drops their checkout guard. After removal, no new
+    /// checkouts for this account key are possible.
+    ///
+    /// Does NOT send QUIT to the server. If a graceful disconnect is needed,
+    /// call `pool.get(account)` to acquire the connection and call `quit()`
+    /// before calling `remove_account()`.
+    pub fn remove_account(&self, account: &AccountKey) {
+        self.pools.remove(account);
+        // Arc refcount decremented. Pool freed when last checkout guard drops.
+    }
+}
+```
+
+**If the caller needs a graceful QUIT before removal:**
+
+```rust
+// Caller-side pattern for graceful account removal:
+if let Ok(mut conn) = pool.get(&account_key).await {
+    let _ = conn.quit().await;  // sends QUIT, server releases lock
+    // conn drops here → put_back → pool returns connection
+}
+pool.remove_account(&account_key);
+// After remove, the inner pool's Arc refcount is 1 (held by the idle entry
+// in SharedPool). Since we just returned the connection via quit() and drop,
+// and remove_account drops the last external Arc, the pool is freed.
+```
+
+#### Race Condition: Concurrent get() and remove_account()
+
+A subtle race exists: caller A calls `get()`, extracts the `Arc<Pool>` from the DashMap (releases the DashMap shard lock), then the scheduler runs caller B who calls `remove_account()` removing the DashMap entry. Caller A still has the `Arc<Pool>` clone (extracted before the remove), so it can proceed with `pool.get().await` safely — the pool object exists in memory, just not in the registry map anymore.
+
+This is the correct behavior: the remove only prevents future registry lookups; it does not invalidate existing references. The Rust `Arc` guarantees this.
+
+---
+
+### 3. Idle Connection Reaping
+
+#### bb8 Reaper: When It Is Spawned
+
+The reaper task is spawned in `PoolInner::new()` **only when** `max_lifetime` or `idle_timeout` is configured:
+
+```rust
+// Source: github.com/djc/bb8/blob/main/bb8/src/inner.rs
+if inner.statics.max_lifetime.is_some() || inner.statics.idle_timeout.is_some() {
+    let start = Instant::now() + inner.statics.reaper_rate;
+    let interval = interval_at(start.into(), inner.statics.reaper_rate);
+    tokio::spawn(Reaper { interval, pool: Arc::downgrade(&inner) }.run());
+}
+```
+
+**Implication for Pop3Pool:** Because the recommended builder sets both `idle_timeout` and `max_lifetime`, the reaper is always spawned. It requires an active Tokio runtime to exist when the pool is built. This means:
+- `bb8::Pool::builder().build(manager).await` must be called within a `tokio::Runtime` context.
+- The spawned reaper task is associated with the Tokio runtime it was spawned on.
+
+#### Reaper Interval (Default: 30 Seconds)
+
+The `reaper_rate` defaults to **30 seconds** (verified from bb8 issue #157). The reaper wakes every 30 seconds and checks all idle connections against `idle_timeout` and `max_lifetime`. This means:
+- If `idle_timeout = 5 min`, the connection may live up to `5 min + 30 sec` before being reaped (the reaper fires 30s late).
+- For POP3, where servers enforce a 10-minute autologout, a 5-minute `idle_timeout` means connections are reliably reaped well before the server drops them. The 30-second reaper lag is acceptable.
+
+#### What the Reaper Does to Expired Connections
+
+The `reap()` function (from `internals.rs`) uses `retain()` to remove expired entries from the idle connection queue:
+
+```rust
+// Source: github.com/djc/bb8/blob/main/bb8/src/internals.rs
+self.conns.retain(|conn| {
+    let mut keep = true;
+    if let Some(timeout) = config.idle_timeout {
+        if now - conn.idle_start >= timeout { keep &= false; }
+    }
+    if let Some(lifetime) = config.max_lifetime {
+        if conn.conn.is_expired(now, lifetime) { keep &= false; }
+    }
+    keep
+});
+```
+
+The removed `IdleConn<Pop3Client>` is simply dropped — `retain()` discards them. This means:
+- **No QUIT is sent.** The TCP stream is closed by `Drop` on `Pop3Client` (or the underlying `TcpStream`).
+- The server sees an abrupt connection close. Per RFC 1939, no UPDATE state is entered, no messages are deleted.
+
+**Verdict for POP3:** bb8's reaper dropping connections without QUIT is **correct** for idle connections. An idle pooled POP3 connection has no pending DELE marks (callers using the pool for DELE would not be letting the connection sit idle in the pool). The lock is released by the server when it detects the TCP close.
+
+#### Should Idle Connections Send QUIT Before Being Dropped?
+
+**No, not in the reaper path.** The reaper is synchronous (`retain()` is a sync closure) and cannot send async QUIT. Attempting to block on QUIT inside `retain()` would deadlock or panic. This is correct behavior — the reaper is purely a resource-cleanup mechanism, not a protocol-state machine.
+
+If the caller needs QUIT on idle connections (for log audit trails on the server side), they must call `Pop3Pool::shutdown()` explicitly, which performs async QUIT before dropping pools.
+
+#### Correct idle_timeout for POP3
+
+| Server | Documented Idle Timeout | Source |
+|--------|------------------------|--------|
+| RFC 1939 minimum | 10 minutes | RFC 1939 §8 |
+| Dovecot POP3 default | 10 minutes | Dovecot docs (CLIENT_IDLE_TIMEOUT_MSECS) |
+| Gmail POP3 | ~7-10 minutes (estimated from reports) | Gmail community forums |
+| Courier POP3 | 10 minutes | Courier docs |
+| Exchange/Outlook | ~10 minutes | Microsoft docs |
+
+**Recommendation:** Set `idle_timeout = 5 minutes` (300 seconds). This is half the RFC 1939 minimum server autologout timer, providing a comfortable safety margin. A connection idle for 5 minutes in the pool will be reaped before the server's 10-minute timer fires, preventing the server from dropping the connection first and leaving the pool with a broken connection.
+
+```rust
+// Recommended idle_timeout for POP3 pool builder
+.idle_timeout(Some(std::time::Duration::from_secs(300)))   // 5 min (half RFC min)
+.max_lifetime(Some(std::time::Duration::from_secs(1800)))  // 30 min max age
+```
+
+---
+
+### 4. Connection Lifecycle After Errors
+
+#### bb8 Connection State Machine
+
+bb8 connections pass through these states (inferred from source and trait docs):
+
+```
+CHECKOUT FLOW:
+  pool.get() called
+       │
+       ▼
+  Wait for available slot (or create new connection via connect())
+       │
+       ▼
+  [If test_on_check_out = true] → call is_valid()
+       │                              │
+       │                              ├─ Ok(()) → connection is healthy
+       │                              └─ Err(_) → connection dropped; retry connect()
+       │
+       ▼
+  [Always] → call has_broken()
+       │         │
+       │         ├─ false → proceed
+       │         └─ true  → connection dropped; retry connect()
+       │
+       ▼
+  PooledConnection<'_, M> returned to caller
+
+RETURN FLOW (PooledConnection dropped):
+  put_back() called
+       │
+       ├─ is_expired(max_lifetime) → drop (no QUIT)
+       ├─ [has_broken() called again at return] → drop (no QUIT)
+       └─ otherwise → returned to idle queue
+```
+
+#### If is_valid() Fails
+
+`is_valid()` returning `Err(_)` tells bb8 the connection is dead. bb8 drops the connection (no QUIT) and creates a new one by calling `connect()`. For `Pop3ConnectionManager`, `connect()` does full `tcp_connect + login`, so the next caller gets a freshly authenticated connection.
+
+**With `retry_connection(false)`** (recommended for POP3): if `connect()` fails (auth error, network error), the error propagates immediately to the caller rather than looping until `connection_timeout`.
+
+#### If has_broken() Returns true
+
+`has_broken()` is called before checkout (after `is_valid()`) and also when the connection is returned to the pool. If `true`:
+- The connection is dropped (no QUIT).
+- A replacement connection is created via `connect()`.
+- This is the primary mechanism for detecting TCP half-open states and stale connections without sending a probe command.
+
+For `Pop3ConnectionManager`, `has_broken()` calls `conn.is_closed()` — a synchronous flag check on the connection's internal state (set to `true` after a server `-ERR` on connection close, after `quit()` is called, or after an I/O error marks the stream as dead).
+
+#### If connect() Fails
+
+With `retry_connection(false)` (the recommended setting for POP3):
+- Authentication failures (`Pop3Error::AuthFailed`) propagate immediately to the caller.
+- Network failures (`Pop3Error::Io`) propagate immediately.
+- `pool.get()` returns `RunError::User(Pop3Error::AuthFailed)` immediately (not after 30s timeout).
+
+With `retry_connection(true)` (bb8 default — do NOT use for POP3):
+- bb8 retries `connect()` in a loop until `connection_timeout` (30s) elapses.
+- Auth failures cause a 30-second hang before the caller sees an error.
+
+#### Connection State Summary Table
+
+| Scenario | bb8 Action | QUIT Sent? | POP3 Lock Released? |
+|----------|-----------|-----------|---------------------|
+| `is_valid()` fails (NOOP error) | Drop connection, create new | No | Server detects TCP close, releases lock |
+| `has_broken()` = true on checkout | Drop connection, create new | No | Server detects TCP close |
+| `has_broken()` = true on return | Drop connection | No | Server detects TCP close |
+| Connection returned normally | Put back in idle queue | No (connection reused) | Lock retained (expected) |
+| Idle timeout fires (reaper) | Drop connection | No | Server detects TCP close |
+| `pop3Pool::shutdown()` | Check out, send QUIT, drop | Yes | Server releases lock cleanly |
+| `pool.get()` fails with `is_valid()` error, `retry_connection(false)` | Error propagates immediately | No | TCP close releases lock |
+
+---
+
+### 5. Graceful Shutdown with Tokio
+
+#### What Happens to bb8's Reaper When the Runtime Shuts Down
+
+When `tokio::Runtime` is dropped (or `shutdown_timeout()` is called), spawned tasks are cancelled at their next `.await` yield point. The reaper's run loop is:
+
+```rust
+loop {
+    let _ = self.interval.tick().await;  // ← task is cancelled here
+    ...
+}
+```
+
+When the runtime drops, the `interval.tick().await` future is cancelled. The reaper task ends. Because it holds only a `Weak<SharedPool<M>>` (not a strong reference), cancelling the reaper does not prevent the pool from being freed. The pool's `Arc<SharedPool<M>>` is held by the `Pool<M>` struct itself, which is freed through normal Rust drop order as the application stack unwinds.
+
+**Important:** If the reaper is cancelled mid-tick (between `tick()` returning and `reap()` completing), no connections are half-reaped. The `reap()` function is synchronous and does not yield — it runs to completion atomically.
+
+#### Runtime Drop Behavior
+
+From Tokio official docs:
+- `Runtime::drop()` waits indefinitely for all spawned work to stop.
+- Tasks spawned via `tokio::spawn` keep running until they yield, then are dropped.
+- The reaper's `interval.tick().await` is a yield point — on runtime drop, the reaper is cancelled there and exits.
+
+**Risk: Runtime drops before all pool checkouts are completed**
+
+If a caller holds a `PooledConnection` and the runtime is shut down:
+- The `PooledConnection`'s Drop impl calls `put_back()`, which may try to return the connection to the pool's internal queue.
+- If the pool's inner `SharedPool` is already freed (all `Arc` references gone), this is safe — `put_back()` finds the pool gone and just drops the connection.
+- If `put_back()` itself tries to spawn a replenishment task (via `spawn_replenishing_approvals`), and the runtime is gone, `tokio::spawn` will panic with "no runtime available".
+
+**Mitigation:** Ensure all `PooledConnection` guards are dropped **before** dropping the `Pop3Pool` or the Tokio runtime. The standard application pattern is:
+
+```rust
+// Correct shutdown order:
+// 1. Stop accepting new work
+// 2. Wait for in-flight requests (which hold checkout guards) to complete
+// 3. Call pool.shutdown() (sends QUIT to idle connections)
+// 4. Drop Pop3Pool
+// 5. Runtime exits (via #[tokio::main] return or explicit shutdown)
+```
+
+#### Tokio Signal Handler Pattern
+
+For production applications, the recommended pattern:
+
+```rust
+// Source: tokio::signal + Pop3Pool shutdown pattern
+#[tokio::main]
+async fn main() {
+    let pool = Arc::new(Pop3Pool::new(config));
+
+    // ... application logic using pool ...
+
+    // Ctrl+C or SIGTERM handler
+    tokio::signal::ctrl_c().await.expect("failed to listen for ctrl_c");
+
+    // Graceful shutdown: send QUIT to all idle connections
+    pool.shutdown().await;
+
+    // Runtime exits cleanly — reaper task is cancelled, all idle connections
+    // already had QUIT sent, checked-out connections are abandoned (no QUIT).
+}
+```
+
+**Does bb8 spawn any tasks that need explicit cancellation?**
+
+bb8 spawns exactly **one** background task per inner pool: the reaper. It is self-terminating via the `Weak` reference pattern and requires no explicit cancellation. It also spawns short-lived replenishment tasks (`spawn_replenishing_approvals`) during pool maintenance — these are transient and complete quickly.
+
+No manual task handle management is needed for bb8.
+
+#### Risk of Panics if Runtime Drops Before Pool
+
+The risk is in `put_back()` calling `tokio::spawn` when the runtime no longer exists. This panic occurs only if:
+1. A `PooledConnection` is held past the runtime shutdown, AND
+2. Returning that connection triggers a replenishment spawn.
+
+**For `max_size(1)` per-account pools:** Replenishment is never triggered by `put_back()` — the pool is already at capacity (1). No `tokio::spawn` is called during `put_back()` for a full pool. This means the panic risk is **eliminated** for the per-account-singleton pattern used in `Pop3Pool`. This is a subtle but important safety advantage of the `max_size(1)` design.
+
+---
+
+### 6. POP3-Specific Lifecycle
+
+#### RFC 1939 Session State and QUIT
+
+POP3 has three session states:
+- **AUTHORIZATION**: Before authentication. Lock not yet held.
+- **TRANSACTION**: After authentication. Server holds exclusive maildrop lock. DELE marks accumulate.
+- **UPDATE**: Entered only via QUIT. Server commits all DELEs and releases the lock.
+
+```
+TCP connect
+     │
+     ▼
+AUTHORIZATION state
+  USER / PASS → +OK
+     │
+     ▼
+TRANSACTION state  ←─── Pool connections live here
+  DELE 1, DELE 2...
+  NOOP (health check)
+     │
+     ├── QUIT → UPDATE state → server deletes marked messages → lock released → TCP close
+     │
+     └── TCP close without QUIT → session aborts → NO messages deleted → lock released by server
+```
+
+**The pool holds connections in TRANSACTION state.** The maildrop lock is held the entire time a connection is idle in the pool. This is unavoidable — POP3 does not have a "pause session" command. This is why `max_size(1)` is mandatory: two connections to the same mailbox would fight over the lock.
+
+#### TCP Close Without QUIT — Correct for Error Scenarios
+
+RFC 1939 explicitly requires that abrupt session termination (no QUIT) must NOT enter UPDATE state:
+
+> "If a session terminates for some reason other than a client-issued QUIT command, the POP3 session does NOT enter the UPDATE state and MUST not remove any messages from the maildrop."
+
+This means bb8's default "just drop the connection" behavior (no QUIT) for error scenarios is:
+- **Correct** for `is_valid()` failures — the connection was dead anyway; no DELE marks were applied.
+- **Correct** for `has_broken()` = true — same reasoning.
+- **Correct** for reaper expiry — idle connections have no pending DELE marks from the pool's perspective (callers using DELE would have quit and released before returning the connection, or the session-reset semantics from Phase 7 apply).
+
+The only scenario where QUIT is **important** is intentional, controlled shutdown where the caller has issued DELE commands through the pooled connection and wants those deletions committed.
+
+#### Should is_valid() Failure Trigger QUIT Before Drop?
+
+**No.** If `is_valid()` (NOOP) fails, the connection is already broken — either the TCP stream is dead or the server returned an error. Attempting QUIT on a broken connection would also fail, likely with an I/O error. The correct action is to drop the connection immediately. This:
+- Avoids a second failed I/O attempt.
+- Is correct per RFC 1939 (no UPDATE state, no accidental deletions).
+- Allows bb8 to proceed immediately to creating a replacement connection.
+
+**Prescriptive decision:** Do not send QUIT in `is_valid()` error paths or `has_broken()` = true paths. Only send QUIT in `Pop3Pool::shutdown()` for intentional application exit, and expose `quit()` in the checked-out connection for callers who want to explicitly commit DELEs before returning the connection.
+
+#### Connection Lifecycle Diagram
+
+```
+pop3Pool.get(account)
+      │
+      ▼
+bb8 allocates connection slot (max_size=1, blocks if occupied)
+      │
+      ▼
+is_valid() check (NOOP command):
+  +OK → healthy, proceed
+  Err → drop TCP (no QUIT), call connect() to replace
+      │
+      ▼
+PooledConnection returned to caller
+      │
+    [caller uses: stat(), list(), retr(), dele(), etc.]
+      │
+      ├─── Normal drop (caller done)
+      │         → put_back() → connection returned to idle queue
+      │         → idle_start = Instant::now()
+      │         → will be reaped after idle_timeout (5 min)
+      │         → reaper calls retain() → connection dropped (no QUIT)
+      │
+      ├─── Caller calls conn.quit() explicitly, then drops guard
+      │         → QUIT sent → server commits DELEs → TCP close
+      │         → put_back() sees broken connection → discards
+      │         → next get() calls connect() to create fresh session
+      │
+      ├─── I/O error during caller's operation
+      │         → error returned to caller
+      │         → caller drops guard
+      │         → put_back() → has_broken()=true → discard (no QUIT)
+      │         → next get() calls connect()
+      │
+      └─── Pop3Pool::shutdown() called
+                → pool.get(account) (brief timeout)
+                → conn.quit() sent (if connection available)
+                → drop guard → DashMap entry removed → Arc freed
+                → Pool dropped → reaper self-terminates via Weak
+```
+
+#### Lock Retention During Pool Idle Time
+
+**Important operational consequence:** A `Pop3Client` checked into a pool and sitting idle holds the POP3 maildrop lock on the server. This means:
+- No other mail client (Thunderbird, Outlook, mobile app) can access that mailbox while the connection is pooled.
+- The `idle_timeout = 5 minutes` setting limits this lock retention to 5 minutes of idle time.
+- Applications that do not need continuous access should call `conn.quit()` before releasing the checkout guard. This sends QUIT, releases the lock, and causes the pool to create a fresh connection on next checkout.
+
+**Document this prominently in rustdoc on `Pop3Pool`.** POP3's exclusive lock model makes connection pooling more impactful than with stateless protocols (HTTP, Redis).
+
+---
+
+### Supplement Sources
+
+#### Primary (HIGH confidence — source code verified)
+
+- [bb8 inner.rs source](https://github.com/djc/bb8/blob/main/bb8/src/inner.rs) — `PoolInner::new()` reaper spawn with `Weak<SharedPool>`, `Reaper::run()` self-termination logic, `reaper_rate` interval
+- [bb8 internals.rs source](https://github.com/djc/bb8/blob/main/bb8/src/internals.rs) — `reap()` function: `retain()` drops expired connections; no QUIT sent; idle_timeout and max_lifetime comparisons
+- [bb8 api.rs source](https://github.com/djc/bb8/blob/main/bb8/src/api.rs) — `PooledConnection::drop()`: `put_back()` called with connection state; `ConnectionState::Extracted` bypass
+- [bb8 issue #157: Reaper default frequency conflict](https://github.com/djc/bb8/issues/157) — reaper_rate default is 30 seconds; timing conflict with short idle_timeout values
+- [bb8 Builder docs](https://docs.rs/bb8/latest/bb8/struct.Builder.html) — `idle_timeout` default 10 min, `max_lifetime` default 30 min, `test_on_check_out` default true, `reaper_rate` used by tests
+- [Tokio Runtime::drop docs](https://docs.rs/tokio/latest/tokio/runtime/struct.Runtime.html) — "waits forever"; `shutdown_timeout()` for bounded wait; tasks cancelled at next yield point
+- [RFC 1939 §8](https://www.rfc-editor.org/rfc/rfc1939) — autologout timer minimum 10 minutes; QUIT required for UPDATE state; abrupt close MUST NOT delete messages
+
+#### Secondary (MEDIUM confidence)
+
+- [bb8 issue #123: Reaper violates min_idle](https://github.com/djc/bb8/issues/123) — reaper behavior with min_idle; `reap_all_idle_connections` option added
+- [Dovecot POP3 timeouts](https://doc.dovecot.org/2.3/admin_manual/timeouts/) — POP3 client idle timeout 10 minutes; matches RFC 1939 minimum
+- [Tokio task docs](https://docs.rs/tokio/latest/tokio/task/) — spawned task cancellation at yield points on runtime shutdown
