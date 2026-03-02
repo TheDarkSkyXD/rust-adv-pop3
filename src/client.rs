@@ -27,6 +27,7 @@ pub struct Pop3Client {
     transport: Transport,
     greeting: String,
     state: SessionState,
+    is_pipelining: bool,
 }
 
 /// Check that a string does not contain CR or LF (CRLF injection protection).
@@ -64,6 +65,11 @@ fn compute_apop_digest(timestamp: &str, password: &str) -> String {
     format!("{:x}", digest)
 }
 
+/// Maximum number of POP3 commands sent before draining responses in pipelined mode.
+/// Prevents TCP send-buffer deadlock when the server sends large RETR responses.
+/// See RFC 2449 section 6.6 and the Phase 5 research document.
+const PIPELINE_WINDOW: usize = 4;
+
 impl Pop3Client {
     /// Connect to a POP3 server over plain TCP.
     ///
@@ -93,6 +99,7 @@ impl Pop3Client {
             transport,
             greeting: greeting_text.to_string(),
             state: SessionState::Connected,
+            is_pipelining: false,
         })
     }
 
@@ -160,6 +167,7 @@ impl Pop3Client {
             transport,
             greeting: greeting_text.to_string(),
             state: SessionState::Connected,
+            is_pipelining: false,
         })
     }
 
@@ -260,6 +268,62 @@ impl Pop3Client {
         self.transport.is_encrypted()
     }
 
+    /// Returns `true` if the connection is known to be closed.
+    ///
+    /// This flag is set when the server closes the connection (EOF) or
+    /// after [`quit()`](Self::quit) completes. It is not a live probe --
+    /// a connection that has been silently dropped by the server without
+    /// sending EOF will still return `false`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     assert!(!client.is_closed());
+    ///     client.quit().await?;
+    ///     // client is consumed by quit() -- cannot check is_closed() after
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn is_closed(&self) -> bool {
+        self.transport.is_closed()
+    }
+
+    /// Returns `true` if the server advertised the `PIPELINING` capability.
+    ///
+    /// Pipelining is detected automatically by probing the server's CAPA
+    /// response after successful authentication. When pipelining is
+    /// supported, batch methods like [`retr_many()`](Self::retr_many) and
+    /// [`dele_many()`](Self::dele_many) send multiple commands before
+    /// reading responses, significantly improving throughput.
+    ///
+    /// When pipelining is not supported, the batch methods transparently
+    /// fall back to sequential execution (one command at a time).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///     if client.supports_pipelining() {
+    ///         println!("Server supports pipelining!");
+    ///     }
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn supports_pipelining(&self) -> bool {
+        self.is_pipelining
+    }
+
     /// Upgrade the connection to TLS via the STLS command (POP3 STARTTLS).
     ///
     /// Must be called before authentication — STLS is only valid in the
@@ -353,6 +417,12 @@ impl Pop3Client {
 
         // Only set authenticated after both commands succeed
         self.state = SessionState::Authenticated;
+
+        // Probe CAPA for PIPELINING support (PIPE-02).
+        // Don't propagate CAPA errors -- not all servers support CAPA (RFC 1939).
+        let caps = self.capa().await.unwrap_or_default();
+        self.is_pipelining = caps.iter().any(|c| c.name == "PIPELINING");
+
         Ok(())
     }
 
@@ -418,6 +488,11 @@ impl Pop3Client {
         })?;
 
         self.state = SessionState::Authenticated;
+
+        // Probe CAPA for PIPELINING support (PIPE-02).
+        let caps = self.capa().await.unwrap_or_default();
+        self.is_pipelining = caps.iter().any(|c| c.name == "PIPELINING");
+
         Ok(())
     }
 
@@ -567,6 +642,142 @@ impl Pop3Client {
         Ok(Message { data })
     }
 
+    /// Retrieve multiple messages by their message numbers.
+    ///
+    /// Returns a `Vec` with one `Result<Message>` per input ID, in the same
+    /// order as the input slice. Each result is independently `Ok` or `Err`:
+    /// a server `-ERR` for one message does not affect other messages.
+    ///
+    /// When the server supports pipelining (detected via CAPA after login),
+    /// commands are sent in batches for higher throughput. Otherwise, messages
+    /// are retrieved one at a time.
+    ///
+    /// # I/O Error Handling
+    ///
+    /// If an I/O error occurs mid-pipeline, all successfully-received messages
+    /// so far are preserved. The remaining entries in the result vector contain
+    /// the I/O error (cloned as `Pop3Error::ConnectionClosed` or similar).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(Pop3Error::InvalidInput)` immediately if any ID in the
+    /// slice is 0. Returns `Err(Pop3Error::NotAuthenticated)` if the client
+    /// has not logged in.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///
+    ///     let results = client.retr_many(&[1, 2, 3]).await?;
+    ///     for (i, result) in results.into_iter().enumerate() {
+    ///         match result {
+    ///             Ok(msg) => println!("Message {}: {} bytes", i + 1, msg.data.len()),
+    ///             Err(e) => eprintln!("Message {} failed: {}", i + 1, e),
+    ///         }
+    ///     }
+    ///
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn retr_many(&mut self, ids: &[u32]) -> Result<Vec<Result<Message>>> {
+        self.require_auth()?;
+
+        // Validate all IDs upfront
+        for &id in ids {
+            validate_message_id(id)?;
+        }
+
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        if !self.is_pipelining {
+            // Sequential fallback (PIPE-03)
+            let mut results = Vec::with_capacity(ids.len());
+            for &id in ids {
+                results.push(self.retr(id).await);
+            }
+            return Ok(results);
+        }
+
+        // Pipelined path (PIPE-01, PIPE-04)
+        self.retr_many_pipelined(ids).await
+    }
+
+    /// Pipelined RETR: send commands in windows of PIPELINE_WINDOW, drain responses.
+    async fn retr_many_pipelined(&mut self, ids: &[u32]) -> Result<Vec<Result<Message>>> {
+        use tokio::io::AsyncWriteExt;
+
+        let mut results: Vec<Result<Message>> = Vec::with_capacity(ids.len());
+
+        for chunk in ids.chunks(PIPELINE_WINDOW) {
+            // Send phase: write all commands, single flush
+            for &id in chunk {
+                let cmd = format!("RETR {id}\r\n");
+                if let Err(e) = self.transport.writer.write_all(cmd.as_bytes()).await {
+                    // I/O error during send -- fill remaining with error
+                    let remaining = ids.len() - results.len();
+                    for _ in 0..remaining {
+                        results.push(Err(Pop3Error::Io(std::io::Error::new(
+                            e.kind(),
+                            e.to_string(),
+                        ))));
+                    }
+                    return Ok(results);
+                }
+            }
+            if let Err(e) = self.transport.writer.flush().await {
+                let remaining = ids.len() - results.len();
+                for _ in 0..remaining {
+                    results.push(Err(Pop3Error::Io(std::io::Error::new(
+                        e.kind(),
+                        e.to_string(),
+                    ))));
+                }
+                return Ok(results);
+            }
+
+            // Receive phase: drain exactly chunk.len() responses
+            for _ in chunk {
+                match self.read_retr_response().await {
+                    Ok(msg) => results.push(Ok(msg)),
+                    Err(Pop3Error::ConnectionClosed)
+                    | Err(Pop3Error::Timeout)
+                    | Err(Pop3Error::Io(_)) => {
+                        // I/O-level error: connection may be dead.
+                        // Preserve what we have, fill rest with error.
+                        let remaining = ids.len() - results.len();
+                        for _ in 0..remaining {
+                            results.push(Err(Pop3Error::ConnectionClosed));
+                        }
+                        return Ok(results);
+                    }
+                    Err(e) => {
+                        // Server-level error (-ERR for this message): record it, continue
+                        results.push(Err(e));
+                    }
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Read a single RETR response (status line + multiline body).
+    async fn read_retr_response(&mut self) -> Result<Message> {
+        let line = self.transport.read_line().await?;
+        response::parse_status_line(&line)?;
+        let data = self.transport.read_multiline().await?;
+        Ok(Message { data })
+    }
+
     /// Mark a message for deletion.
     ///
     /// The message is not immediately deleted — it is removed when the session
@@ -592,6 +803,118 @@ impl Pop3Client {
         validate_message_id(message_id)?;
         self.send_and_check(&format!("DELE {message_id}")).await?;
         Ok(())
+    }
+
+    /// Mark multiple messages for deletion.
+    ///
+    /// Returns a `Vec` with one `Result<()>` per input ID, in the same
+    /// order as the input slice. Each result is independently `Ok` or `Err`:
+    /// a server `-ERR` for one message does not affect other messages.
+    ///
+    /// Deletions are committed when [`quit()`](Self::quit) is called.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///
+    ///     let results = client.dele_many(&[1, 2, 3]).await?;
+    ///     for (i, result) in results.into_iter().enumerate() {
+    ///         match result {
+    ///             Ok(()) => println!("Message {} marked for deletion", i + 1),
+    ///             Err(e) => eprintln!("Message {} delete failed: {}", i + 1, e),
+    ///         }
+    ///     }
+    ///
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn dele_many(&mut self, ids: &[u32]) -> Result<Vec<Result<()>>> {
+        self.require_auth()?;
+
+        for &id in ids {
+            validate_message_id(id)?;
+        }
+
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        if !self.is_pipelining {
+            // Sequential fallback (PIPE-03)
+            let mut results = Vec::with_capacity(ids.len());
+            for &id in ids {
+                results.push(self.dele(id).await);
+            }
+            return Ok(results);
+        }
+
+        // Pipelined path
+        self.dele_many_pipelined(ids).await
+    }
+
+    /// Pipelined DELE: send commands in windows, drain responses.
+    async fn dele_many_pipelined(&mut self, ids: &[u32]) -> Result<Vec<Result<()>>> {
+        use tokio::io::AsyncWriteExt;
+
+        let mut results: Vec<Result<()>> = Vec::with_capacity(ids.len());
+
+        for chunk in ids.chunks(PIPELINE_WINDOW) {
+            // Send phase
+            for &id in chunk {
+                let cmd = format!("DELE {id}\r\n");
+                if let Err(e) = self.transport.writer.write_all(cmd.as_bytes()).await {
+                    let remaining = ids.len() - results.len();
+                    for _ in 0..remaining {
+                        results.push(Err(Pop3Error::Io(std::io::Error::new(
+                            e.kind(),
+                            e.to_string(),
+                        ))));
+                    }
+                    return Ok(results);
+                }
+            }
+            if let Err(e) = self.transport.writer.flush().await {
+                let remaining = ids.len() - results.len();
+                for _ in 0..remaining {
+                    results.push(Err(Pop3Error::Io(std::io::Error::new(
+                        e.kind(),
+                        e.to_string(),
+                    ))));
+                }
+                return Ok(results);
+            }
+
+            // Receive phase: single-line responses for DELE
+            for _ in chunk {
+                match self.transport.read_line().await {
+                    Ok(line) => match response::parse_status_line(&line) {
+                        Ok(_) => results.push(Ok(())),
+                        Err(e) => results.push(Err(e)),
+                    },
+                    Err(Pop3Error::ConnectionClosed)
+                    | Err(Pop3Error::Timeout)
+                    | Err(Pop3Error::Io(_)) => {
+                        let remaining = ids.len() - results.len();
+                        for _ in 0..remaining {
+                            results.push(Err(Pop3Error::ConnectionClosed));
+                        }
+                        return Ok(results);
+                    }
+                    Err(e) => {
+                        results.push(Err(e));
+                    }
+                }
+            }
+        }
+
+        Ok(results)
     }
 
     /// Reset the session, unmarking all messages that were marked for deletion.
@@ -675,6 +998,7 @@ impl Pop3Client {
         this.transport.send_command("QUIT").await?;
         let line = this.transport.read_line().await?;
         response::parse_status_line(&line)?;
+        this.transport.set_closed();
         Ok(())
         // `this` is dropped here, TCP connection closes
     }
@@ -760,6 +1084,7 @@ fn build_test_client(mock: tokio_test::io::Mock) -> Pop3Client {
         transport,
         greeting: String::new(),
         state: SessionState::Connected,
+        is_pipelining: false,
     }
 }
 
@@ -770,6 +1095,18 @@ fn build_authenticated_test_client(mock: tokio_test::io::Mock) -> Pop3Client {
         transport,
         greeting: String::new(),
         state: SessionState::Authenticated,
+        is_pipelining: false,
+    }
+}
+
+#[cfg(test)]
+fn build_authenticated_test_client_with_pipelining(mock: tokio_test::io::Mock) -> Pop3Client {
+    let transport = Transport::mock(mock);
+    Pop3Client {
+        transport,
+        greeting: String::new(),
+        state: SessionState::Authenticated,
+        is_pipelining: true,
     }
 }
 
@@ -780,6 +1117,7 @@ fn build_test_client_with_greeting(mock: tokio_test::io::Mock, greeting: &str) -
         transport,
         greeting: greeting.to_string(),
         state: SessionState::Connected,
+        is_pipelining: false,
     }
 }
 
@@ -827,6 +1165,25 @@ mod tests {
         assert!(!client.is_encrypted());
     }
 
+    // --- is_closed: tracks connection closed state ---
+
+    #[test]
+    fn is_closed_false_on_new_client() {
+        let mock = Builder::new().build();
+        let client = build_test_client(mock);
+        assert!(!client.is_closed());
+    }
+
+    #[tokio::test]
+    async fn is_closed_true_after_eof() {
+        // Write STAT\r\n, then return EOF on the read (no read data)
+        let mock = Builder::new().write(b"STAT\r\n").build();
+        let mut client = build_authenticated_test_client(mock);
+        let result = client.stat().await;
+        assert!(result.is_err());
+        assert!(client.is_closed());
+    }
+
     // --- FIX-01: rset() must send "RSET\r\n", not "RETR\r\n" ---
 
     #[tokio::test]
@@ -854,6 +1211,10 @@ mod tests {
             .read(b"+OK\r\n")
             .write(b"PASS pass\r\n")
             .read(b"+OK logged in\r\n")
+            // CAPA probe after successful login
+            .write(b"CAPA\r\n")
+            .read(b"+OK\r\n")
+            .read(b".\r\n")
             .build();
         let mut client = build_test_client(mock);
         assert_eq!(client.state(), SessionState::Connected);
@@ -907,6 +1268,10 @@ mod tests {
             .read(b"+OK\r\n")
             .write(b"PASS secret\r\n")
             .read(b"+OK logged in\r\n")
+            // CAPA probe after successful login
+            .write(b"CAPA\r\n")
+            .read(b"+OK\r\n")
+            .read(b".\r\n")
             .build();
         let mut client = build_test_client(mock);
         let result = client.login("alice", "secret").await;
@@ -1240,6 +1605,10 @@ mod tests {
             .read(b"+OK\r\n")
             .write(b"PASS secret\r\n")
             .read(b"+OK logged in\r\n")
+            // CAPA probe after successful login
+            .write(b"CAPA\r\n")
+            .read(b"+OK\r\n")
+            .read(b".\r\n")
             .write(b"STAT\r\n")
             .read(b"+OK 2 5000\r\n")
             .write(b"LIST\r\n")
@@ -1285,6 +1654,12 @@ mod tests {
             .read(b"+OK\r\n")
             .write(b"PASS pass123\r\n")
             .read(b"+OK welcome\r\n")
+            // CAPA probe after successful login (no PIPELINING in this server)
+            .write(b"CAPA\r\n")
+            .read(b"+OK\r\n")
+            .read(b"TOP\r\n")
+            .read(b"UIDL\r\n")
+            .read(b".\r\n")
             // TOP
             .write(b"TOP 1 3\r\n")
             .read(b"+OK\r\nFrom: sender@example.com\r\nSubject: Test\r\n\r\nLine 1\r\nLine 2\r\nLine 3\r\n.\r\n")
@@ -1322,6 +1697,10 @@ mod tests {
             .read(b"+OK\r\n")
             .write(b"PASS pass\r\n")
             .read(b"+OK\r\n")
+            // CAPA probe after successful login
+            .write(b"CAPA\r\n")
+            .read(b"+OK\r\n")
+            .read(b".\r\n")
             // UIDL all
             .write(b"UIDL\r\n")
             .read(b"+OK\r\n1 msg-aaa\r\n2 msg-bbb\r\n3 msg-ccc\r\n.\r\n")
@@ -1486,6 +1865,10 @@ mod tests {
         let mock = Builder::new()
             .write(b"APOP mrose c4c9334bac560ecc979e58001b3e22fb\r\n")
             .read(b"+OK mastrstrmt mastrstrmt is strstrmt\r\n")
+            // CAPA probe after successful apop
+            .write(b"CAPA\r\n")
+            .read(b"+OK\r\n")
+            .read(b".\r\n")
             .build();
         let mut client = build_test_client_with_greeting(
             mock,
@@ -1614,5 +1997,279 @@ mod tests {
         // RFC 1939 section 7 test vector
         let digest = compute_apop_digest("<1896.697170952@dbc.mtview.ca.us>", "tanstaaf");
         assert_eq!(digest, "c4c9334bac560ecc979e58001b3e22fb");
+    }
+
+    // --- retr_many and dele_many tests (PIPE-01, PIPE-03, PIPE-04, PIPE-05) ---
+
+    #[tokio::test]
+    async fn retr_many_sequential_fallback() {
+        // Server does NOT advertise PIPELINING -- sequential mode
+        let mock = Builder::new()
+            // retr(1) sequential
+            .write(b"RETR 1\r\n")
+            .read(b"+OK\r\n")
+            .read(b"message 1 body\r\n")
+            .read(b".\r\n")
+            // retr(2) sequential
+            .write(b"RETR 2\r\n")
+            .read(b"+OK\r\n")
+            .read(b"message 2 body\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        // is_pipelining is false by default
+        let results = client.retr_many(&[1, 2]).await.unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results[0].is_ok());
+        assert!(results[1].is_ok());
+        assert_eq!(results[0].as_ref().unwrap().data, "message 1 body\n");
+        assert_eq!(results[1].as_ref().unwrap().data, "message 2 body\n");
+    }
+
+    #[tokio::test]
+    async fn dele_many_sequential_fallback() {
+        let mock = Builder::new()
+            .write(b"DELE 1\r\n")
+            .read(b"+OK message 1 deleted\r\n")
+            .write(b"DELE 2\r\n")
+            .read(b"+OK message 2 deleted\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let results = client.dele_many(&[1, 2]).await.unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results[0].is_ok());
+        assert!(results[1].is_ok());
+    }
+
+    #[tokio::test]
+    async fn retr_many_pipelined_path() {
+        // With pipelining, writes are batched before reads
+        let mock = Builder::new()
+            // All writes first (within window)
+            .write(b"RETR 1\r\n")
+            .write(b"RETR 2\r\n")
+            .write(b"RETR 3\r\n")
+            // Then all reads
+            .read(b"+OK\r\n")
+            .read(b"body 1\r\n")
+            .read(b".\r\n")
+            .read(b"+OK\r\n")
+            .read(b"body 2\r\n")
+            .read(b".\r\n")
+            .read(b"+OK\r\n")
+            .read(b"body 3\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client_with_pipelining(mock);
+        let results = client.retr_many(&[1, 2, 3]).await.unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].as_ref().unwrap().data, "body 1\n");
+        assert_eq!(results[1].as_ref().unwrap().data, "body 2\n");
+        assert_eq!(results[2].as_ref().unwrap().data, "body 3\n");
+    }
+
+    #[tokio::test]
+    async fn dele_many_pipelined_path() {
+        let mock = Builder::new()
+            .write(b"DELE 1\r\n")
+            .write(b"DELE 2\r\n")
+            .write(b"DELE 3\r\n")
+            .read(b"+OK message 1 deleted\r\n")
+            .read(b"+OK message 2 deleted\r\n")
+            .read(b"+OK message 3 deleted\r\n")
+            .build();
+        let mut client = build_authenticated_test_client_with_pipelining(mock);
+        let results = client.dele_many(&[1, 2, 3]).await.unwrap();
+        assert_eq!(results.len(), 3);
+        assert!(results.iter().all(|r| r.is_ok()));
+    }
+
+    #[tokio::test]
+    async fn retr_many_pipelined_per_item_error() {
+        // Second message returns -ERR, but first and third succeed
+        let mock = Builder::new()
+            .write(b"RETR 1\r\n")
+            .write(b"RETR 2\r\n")
+            .write(b"RETR 3\r\n")
+            .read(b"+OK\r\n")
+            .read(b"body 1\r\n")
+            .read(b".\r\n")
+            .read(b"-ERR no such message\r\n")
+            .read(b"+OK\r\n")
+            .read(b"body 3\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client_with_pipelining(mock);
+        let results = client.retr_many(&[1, 2, 3]).await.unwrap();
+        assert_eq!(results.len(), 3);
+        assert!(results[0].is_ok());
+        assert!(results[1].is_err()); // -ERR for message 2
+        assert!(results[2].is_ok());
+    }
+
+    #[tokio::test]
+    async fn dele_many_pipelined_per_item_error() {
+        let mock = Builder::new()
+            .write(b"DELE 1\r\n")
+            .write(b"DELE 2\r\n")
+            .read(b"+OK deleted\r\n")
+            .read(b"-ERR message already deleted\r\n")
+            .build();
+        let mut client = build_authenticated_test_client_with_pipelining(mock);
+        let results = client.dele_many(&[1, 2]).await.unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results[0].is_ok());
+        assert!(results[1].is_err());
+    }
+
+    #[tokio::test]
+    async fn retr_many_rejects_zero_id() {
+        let mock = Builder::new().build();
+        let mut client = build_authenticated_test_client(mock);
+        let result = client.retr_many(&[1, 0, 3]).await;
+        assert!(matches!(result, Err(Pop3Error::InvalidInput)));
+    }
+
+    #[tokio::test]
+    async fn dele_many_rejects_zero_id() {
+        let mock = Builder::new().build();
+        let mut client = build_authenticated_test_client(mock);
+        let result = client.dele_many(&[0]).await;
+        assert!(matches!(result, Err(Pop3Error::InvalidInput)));
+    }
+
+    #[tokio::test]
+    async fn retr_many_empty_ids_returns_empty() {
+        let mock = Builder::new().build();
+        let mut client = build_authenticated_test_client(mock);
+        let results = client.retr_many(&[]).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn retr_many_requires_auth() {
+        let mock = Builder::new().build();
+        let mut client = build_test_client(mock);
+        let result = client.retr_many(&[1]).await;
+        assert!(matches!(result, Err(Pop3Error::NotAuthenticated)));
+    }
+
+    #[tokio::test]
+    async fn dele_many_requires_auth() {
+        let mock = Builder::new().build();
+        let mut client = build_test_client(mock);
+        let result = client.dele_many(&[1]).await;
+        assert!(matches!(result, Err(Pop3Error::NotAuthenticated)));
+    }
+
+    #[tokio::test]
+    async fn retr_many_windowed_8_messages() {
+        // 8 messages = 2 windows of 4 (PIPE-04 windowed strategy)
+        let mock = Builder::new()
+            // Window 1: write 4
+            .write(b"RETR 1\r\n")
+            .write(b"RETR 2\r\n")
+            .write(b"RETR 3\r\n")
+            .write(b"RETR 4\r\n")
+            // Window 1: read 4
+            .read(b"+OK\r\n")
+            .read(b"body1\r\n")
+            .read(b".\r\n")
+            .read(b"+OK\r\n")
+            .read(b"body2\r\n")
+            .read(b".\r\n")
+            .read(b"+OK\r\n")
+            .read(b"body3\r\n")
+            .read(b".\r\n")
+            .read(b"+OK\r\n")
+            .read(b"body4\r\n")
+            .read(b".\r\n")
+            // Window 2: write 4
+            .write(b"RETR 5\r\n")
+            .write(b"RETR 6\r\n")
+            .write(b"RETR 7\r\n")
+            .write(b"RETR 8\r\n")
+            // Window 2: read 4
+            .read(b"+OK\r\n")
+            .read(b"body5\r\n")
+            .read(b".\r\n")
+            .read(b"+OK\r\n")
+            .read(b"body6\r\n")
+            .read(b".\r\n")
+            .read(b"+OK\r\n")
+            .read(b"body7\r\n")
+            .read(b".\r\n")
+            .read(b"+OK\r\n")
+            .read(b"body8\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client_with_pipelining(mock);
+        let results = client.retr_many(&[1, 2, 3, 4, 5, 6, 7, 8]).await.unwrap();
+        assert_eq!(results.len(), 8);
+        assert!(results.iter().all(|r| r.is_ok()));
+    }
+
+    // --- Pipelining detection tests (PIPE-02) ---
+
+    #[tokio::test]
+    async fn pipelining_detected_via_capa() {
+        let mock = Builder::new()
+            .write(b"USER user\r\n")
+            .read(b"+OK\r\n")
+            .write(b"PASS pass\r\n")
+            .read(b"+OK logged in\r\n")
+            // CAPA probe after login
+            .write(b"CAPA\r\n")
+            .read(b"+OK\r\n")
+            .read(b"TOP\r\n")
+            .read(b"UIDL\r\n")
+            .read(b"PIPELINING\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_test_client(mock);
+        client.login("user", "pass").await.unwrap();
+        assert!(client.supports_pipelining());
+    }
+
+    #[tokio::test]
+    async fn pipelining_not_detected_without_capa_entry() {
+        let mock = Builder::new()
+            .write(b"USER user\r\n")
+            .read(b"+OK\r\n")
+            .write(b"PASS pass\r\n")
+            .read(b"+OK logged in\r\n")
+            // CAPA probe after login -- no PIPELINING
+            .write(b"CAPA\r\n")
+            .read(b"+OK\r\n")
+            .read(b"TOP\r\n")
+            .read(b"UIDL\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_test_client(mock);
+        client.login("user", "pass").await.unwrap();
+        assert!(!client.supports_pipelining());
+    }
+
+    #[tokio::test]
+    async fn pipelining_false_when_capa_fails() {
+        let mock = Builder::new()
+            .write(b"USER user\r\n")
+            .read(b"+OK\r\n")
+            .write(b"PASS pass\r\n")
+            .read(b"+OK logged in\r\n")
+            // CAPA probe fails -- server doesn't support CAPA
+            .write(b"CAPA\r\n")
+            .read(b"-ERR command not supported\r\n")
+            .build();
+        let mut client = build_test_client(mock);
+        client.login("user", "pass").await.unwrap();
+        assert!(!client.supports_pipelining());
+    }
+
+    #[test]
+    fn supports_pipelining_false_before_login() {
+        let mock = Builder::new().build();
+        let client = build_test_client(mock);
+        assert!(!client.supports_pipelining());
     }
 }

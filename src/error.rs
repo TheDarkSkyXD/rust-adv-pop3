@@ -74,6 +74,14 @@ pub enum Pop3Error {
     /// The server did not respond within the configured timeout duration.
     #[error("timed out")]
     Timeout,
+
+    /// The server closed the connection unexpectedly.
+    ///
+    /// This typically indicates the server dropped the connection (e.g., due
+    /// to inactivity timeout or server shutdown). Downstream phases use this
+    /// variant for reconnection logic.
+    #[error("connection closed")]
+    ConnectionClosed,
 }
 
 /// A specialized `Result` type for POP3 operations.

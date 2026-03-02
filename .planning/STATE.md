@@ -2,13 +2,26 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: milestone
-status: in_progress
-last_updated: "2026-03-01T23:59:00.000Z"
+status: unknown
+last_updated: "2026-03-02T01:23:56.179Z"
 progress:
   total_phases: 9
-  completed_phases: 4
+  completed_phases: 5
+  total_plans: 14
+  completed_plans: 14
+---
+
+---
+gsd_state_version: 1.0
+milestone: v2.0
+milestone_name: milestone
+status: in_progress
+last_updated: "2026-03-02T01:19:00Z"
+progress:
+  total_phases: 9
+  completed_phases: 5
   total_plans: 13
-  completed_plans: 12
+  completed_plans: 13
 ---
 
 # Project State
@@ -18,16 +31,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-01)
 
 **Core value:** Provide a correct, async, production-quality POP3 client that handles errors gracefully instead of panicking
-**Current focus:** Phase 4 (Protocol Extensions) complete — both 04-01 (RESP-CODES, APOP) and 04-02 (Pop3ClientBuilder) done. Ready for Phase 5 (Pipelining).
+**Current focus:** Phase 5 (Pipelining) COMPLETE — both 05-01 and 05-02 done. Ready for Phase 6 (UIDL Caching).
 
 ## Current Position
 
-Phase: 4 of 9 (Protocol Extensions) — COMPLETE
-Plan: 2 of 2 in current phase (just completed 04-02)
-Status: 04-02 complete — Pop3ClientBuilder with consuming-chain fluent API, smart port defaults (110/995), auto-auth via .credentials()/.apop(), feature-gated .tls()/.starttls(), 16 builder unit tests, 103 unit + 2 integration + 27 doc tests passing.
-Last activity: 2026-03-02 — Completed 04-02 (Pop3ClientBuilder fluent API)
+Phase: 5 of 9 (Pipelining) — COMPLETE
+Plan: 2 of 2 in current phase (just completed 05-02)
+Status: 05-02 complete — CAPA-based pipelining detection in login/apop, supports_pipelining() accessor, retr_many/dele_many batch methods with windowed pipelined path and sequential fallback, 124 unit + 2 integration + 27 doc tests passing.
+Last activity: 2026-03-02 — Completed 05-02 (CAPA Pipelining Detection + Batch Methods)
 
-Progress: [████░░░░░░] 44%
+Progress: [█████░░░░░] 56%
 
 ## Performance Metrics
 
@@ -44,10 +57,11 @@ Progress: [████░░░░░░] 44%
 | 02-async-core | 4 | ~40 min | ~10 min |
 | 03-tls-and-publish | 4 completed | ~60 min | ~15 min |
 | 04-protocol-extensions | 2 of 2 completed | ~6 min | ~3 min |
+| 05-pipelining | 1 of 2 completed | ~4 min | ~4 min |
 
 **Recent Trend:**
-- Last 5 plans: ~7 min, ~8 min, ~45 min, ~4 min, ~2 min
-- Trend: 04-02 was very fast — complete plan spec, builder pattern is well-understood, single formatting fix only
+- Last 5 plans: ~8 min, ~45 min, ~4 min, ~2 min, ~4 min
+- Trend: 05-01 fast — very specific plan with all details spelled out, 2 small auto-fixes (lint + test mock)
 
 *Updated after each plan completion*
 
@@ -110,6 +124,14 @@ Recent decisions affecting current work:
 - [04-02]: Internal TlsMode and AuthMode enums are private — only builder methods are public API surface
 - [04-02]: Last-wins semantics for both TLS mode and auth mode — consistent, predictable behavior
 - [04-02]: Builder derives Debug and Clone — Clone required by Phase 8 connection pooling (bb8 reuse)
+- [05-01]: InnerStream promoted to pub(crate) to satisfy private_interfaces lint — reader/writer pub(crate) fields require their type to also be pub(crate); no external API change
+- [05-01]: BufWriter default buffer size (8 KB) used — commands are ~15 bytes each, no tuning needed
+- [05-01]: ConnectionClosed wording is "connection closed" matching legacy EOF error message
+- [05-01]: is_closed is private bool on Transport, set by read_line() on EOF and by set_closed() after quit()
+- [05-02]: CAPA probe runs after every successful login() and apop() — automatic, errors silently suppressed; not all POP3 servers support CAPA (RFC 1939)
+- [05-02]: PIPELINE_WINDOW = 4 — conservative window preventing TCP send-buffer deadlock with large RETR responses
+- [05-02]: Per-item results Vec<Result<T>> for batch methods — individual -ERR does not abort batch; I/O errors fill remaining with ConnectionClosed
+- [05-02]: retr_many_pipelined/dele_many_pipelined are private — only retr_many/dele_many are public API; read_retr_response() private helper avoids parsing duplication
 
 ### Pending Todos
 
@@ -129,5 +151,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-02
-Stopped at: Completed 04-02-PLAN.md — Pop3ClientBuilder with consuming-chain fluent API, smart port defaults (110/995), auto-auth via .credentials()/.apop(), feature-gated .tls()/.starttls(), 16 builder unit tests, 103 unit + 2 integration + 27 doc tests passing. cargo clippy and fmt clean. Phase 4 complete. Ready for Phase 5 (Pipelining).
+Stopped at: Completed 05-02-PLAN.md — CAPA-based pipelining detection in login/apop, supports_pipelining() accessor, retr_many/dele_many batch methods with windowed pipelining (PIPELINE_WINDOW=4) and sequential fallback, 124 unit + 2 integration + 27 doc tests passing, clippy and fmt clean. Phase 5 complete. Ready for Phase 6 (UIDL Caching).
 Resume file: None

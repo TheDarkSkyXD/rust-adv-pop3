@@ -58,6 +58,8 @@ async fn public_api_connect_login_stat_quit() {
     let addr = spawn_mock_server(vec![
         ("USER testuser", "+OK\r\n"),
         ("PASS testpass", "+OK logged in\r\n"),
+        // CAPA probe sent automatically by login() after successful auth
+        ("CAPA", "+OK\r\n.\r\n"),
         ("STAT", "+OK 3 15000\r\n"),
         ("QUIT", "+OK goodbye\r\n"),
     ])
@@ -87,6 +89,8 @@ async fn public_api_capa_and_top() {
         ("CAPA", "+OK\r\nTOP\r\nUIDL\r\nSASL PLAIN\r\n.\r\n"),
         ("USER user", "+OK\r\n"),
         ("PASS pass", "+OK\r\n"),
+        // CAPA probe sent automatically by login() after successful auth
+        ("CAPA", "+OK\r\nTOP\r\nUIDL\r\n.\r\n"),
         ("TOP 1 5", "+OK\r\nSubject: Test\r\n\r\nBody line\r\n.\r\n"),
         ("QUIT", "+OK\r\n"),
     ])

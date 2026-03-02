@@ -2,7 +2,9 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use tokio::io::{self, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
+use tokio::io::{
+    self, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter, ReadBuf,
+};
 use tokio::net::TcpStream;
 
 use crate::error::{Pop3Error, Result};
@@ -11,7 +13,7 @@ use crate::error::{Pop3Error, Result};
 pub(crate) const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Concrete stream types — enables unsplit() for STARTTLS upgrade.
-enum InnerStream {
+pub(crate) enum InnerStream {
     Plain(TcpStream),
     #[cfg(feature = "rustls-tls")]
     RustlsTls(Box<tokio_rustls::client::TlsStream<TcpStream>>),
@@ -108,10 +110,11 @@ impl AsyncWrite for InnerStream {
 }
 
 pub(crate) struct Transport {
-    reader: BufReader<io::ReadHalf<InnerStream>>,
-    writer: io::WriteHalf<InnerStream>,
-    timeout: Duration,
+    pub(crate) reader: BufReader<io::ReadHalf<InnerStream>>,
+    pub(crate) writer: io::BufWriter<io::WriteHalf<InnerStream>>,
+    pub(crate) timeout: Duration,
     encrypted: bool,
+    is_closed: bool,
 }
 
 impl Transport {
@@ -125,9 +128,10 @@ impl Transport {
         let (read_half, write_half) = io::split(inner);
         Ok(Transport {
             reader: BufReader::new(read_half),
-            writer: write_half,
+            writer: BufWriter::new(write_half),
             timeout,
             encrypted: false,
+            is_closed: false,
         })
     }
 
@@ -172,9 +176,10 @@ impl Transport {
         let (read_half, write_half) = io::split(inner);
         Ok(Transport {
             reader: BufReader::new(read_half),
-            writer: write_half,
+            writer: BufWriter::new(write_half),
             timeout,
             encrypted: true,
+            is_closed: false,
         })
     }
 
@@ -211,9 +216,10 @@ impl Transport {
         let (read_half, write_half) = io::split(inner);
         Ok(Transport {
             reader: BufReader::new(read_half),
-            writer: write_half,
+            writer: BufWriter::new(write_half),
             timeout,
             encrypted: true,
+            is_closed: false,
         })
     }
 
@@ -234,6 +240,19 @@ impl Transport {
     /// Returns `true` if the connection is encrypted via TLS.
     pub(crate) fn is_encrypted(&self) -> bool {
         self.encrypted
+    }
+
+    /// Returns `true` if the connection is known to be closed.
+    ///
+    /// This is set when `read_line()` receives EOF or when `quit()` completes.
+    /// It is NOT a live TCP probe -- it tracks known-closed state only.
+    pub(crate) fn is_closed(&self) -> bool {
+        self.is_closed
+    }
+
+    /// Mark the transport as closed (called by quit() after successful QUIT).
+    pub(crate) fn set_closed(&mut self) {
+        self.is_closed = true;
     }
 
     /// Upgrade a plain TCP connection to TLS in-place (STARTTLS).
@@ -262,10 +281,11 @@ impl Transport {
         let (placeholder_read, placeholder_write) = io::split(InnerStream::Upgrading);
 
         let old_reader = std::mem::replace(&mut self.reader, BufReader::new(placeholder_read));
-        let old_writer = std::mem::replace(&mut self.writer, placeholder_write);
+        let old_writer = std::mem::replace(&mut self.writer, BufWriter::new(placeholder_write));
 
         let read_half = old_reader.into_inner();
-        let inner_stream = read_half.unsplit(old_writer);
+        let write_half = old_writer.into_inner();
+        let inner_stream = read_half.unsplit(write_half);
 
         let tcp_stream = match inner_stream {
             InnerStream::Plain(tcp) => tcp,
@@ -280,7 +300,7 @@ impl Transport {
 
         let (new_read, new_write) = io::split(tls_inner);
         self.reader = BufReader::new(new_read);
-        self.writer = new_write;
+        self.writer = BufWriter::new(new_write);
         self.encrypted = true;
 
         Ok(())
@@ -363,10 +383,8 @@ impl Transport {
             .await
             .map_err(|_| Pop3Error::Timeout)??;
         if n == 0 {
-            return Err(Pop3Error::Io(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "connection closed",
-            )));
+            self.is_closed = true;
+            return Err(Pop3Error::ConnectionClosed);
         }
         Ok(line)
     }
@@ -407,9 +425,10 @@ impl Transport {
         let (read_half, write_half) = io::split(inner);
         Transport {
             reader: BufReader::new(read_half),
-            writer: write_half,
+            writer: BufWriter::new(write_half),
             timeout: Duration::from_secs(30),
             encrypted: false,
+            is_closed: false,
         }
     }
 }
@@ -446,7 +465,39 @@ mod tests {
         let mock = Builder::new().build(); // empty — EOF
         let mut transport = Transport::mock(mock);
         let result = transport.read_line().await;
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(crate::error::Pop3Error::ConnectionClosed)
+        ));
+    }
+
+    #[tokio::test]
+    async fn is_closed_false_initially() {
+        let mock = Builder::new().build();
+        let transport = Transport::mock(mock);
+        assert!(!transport.is_closed());
+    }
+
+    #[tokio::test]
+    async fn is_closed_true_after_eof() {
+        let mock = Builder::new().build(); // empty -- EOF on read
+        let mut transport = Transport::mock(mock);
+        let result = transport.read_line().await;
+        assert!(matches!(
+            result,
+            Err(crate::error::Pop3Error::ConnectionClosed)
+        ));
+        assert!(transport.is_closed());
+    }
+
+    #[tokio::test]
+    async fn send_command_works_with_bufwriter() {
+        // Verify that send_command still works after BufWriter upgrade.
+        // The existing send_command_writes_crlf test also validates this,
+        // but this test explicitly checks flush behavior.
+        let mock = Builder::new().write(b"NOOP\r\n").build();
+        let mut transport = Transport::mock(mock);
+        transport.send_command("NOOP").await.unwrap();
     }
 
     #[tokio::test]

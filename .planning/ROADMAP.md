@@ -23,7 +23,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: Protocol Extensions** - Add APOP, RESP-CODES, and builder pattern API (completed 2026-03-02)
 
 **v3.0 Phases:**
-- [ ] **Phase 5: Pipelining** - Foundation modifications and RFC 2449 command pipelining with windowed send strategy
+- [x] **Phase 5: Pipelining** - Foundation modifications and RFC 2449 command pipelining with windowed send strategy (completed 2026-03-02)
 - [ ] **Phase 6: UIDL Caching** - UIDL cache and incremental sync helper for avoiding redundant message downloads
 - [ ] **Phase 7: Reconnection** - Automatic reconnection with exponential backoff and jitter via Decorator pattern
 - [ ] **Phase 8: Connection Pooling** - bb8-backed connection pool for multi-account concurrent access
@@ -100,7 +100,9 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Connecting to a mock server that does not advertise PIPELINING causes the batch methods to fall back to sequential execution silently — no error is raised
   4. A test confirms that sending all commands in an unbounded batch does not deadlock — the windowed send strategy keeps at most N commands outstanding at a time
   5. `src/client.rs` exposes `pub(crate)` reader/writer fields and an `is_closed() -> bool` method — `Pop3ClientBuilder` derives `Clone`
-**Plans**: TBD
+**Plans**: 2/2 plans complete
+- [x] 05-01-PLAN.md — BufWriter on Transport writer, pub(crate) reader/writer/timeout, ConnectionClosed variant, is_closed()/set_closed() on Transport and Pop3Client
+- [x] 05-02-PLAN.md — CAPA-based pipelining detection in login/apop, supports_pipelining() accessor, retr_many/dele_many batch methods with windowed send (PIPE-01..05)
 
 ### Phase 6: UIDL Caching
 **Goal**: Callers can retrieve only messages they have not seen before, and the cache automatically prunes ghost entries so it never incorrectly marks a new message as already seen
@@ -154,7 +156,7 @@ v3.0 phases execute in order: 5 → 6 → 7 → 8 → 9 (Phase 6 can run in para
 | 2. Async Core | 4/4 | Complete (verified) | 2026-03-01 |
 | 3. TLS and Publish | 4/4 | Complete   | 2026-03-01 |
 | 4. Protocol Extensions | 2/2 | Complete | 2026-03-02 |
-| 5. Pipelining | 0/? | Not started | - |
+| 5. Pipelining | 2/2 | Complete | 2026-03-02 |
 | 6. UIDL Caching | 0/? | Not started | - |
 | 7. Reconnection | 0/? | Not started | - |
 | 8. Connection Pooling | 0/? | Not started | - |
