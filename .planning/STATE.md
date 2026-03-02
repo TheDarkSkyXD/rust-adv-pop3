@@ -3,6 +3,19 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: milestone
 status: unknown
+last_updated: "2026-03-02T03:52:32.077Z"
+progress:
+  total_phases: 9
+  completed_phases: 7
+  total_plans: 19
+  completed_plans: 18
+---
+
+---
+gsd_state_version: 1.0
+milestone: v2.0
+milestone_name: milestone
+status: unknown
 last_updated: "2026-03-02T02:47:23.923Z"
 progress:
   total_phases: 9
@@ -83,16 +96,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-01)
 
 **Core value:** Provide a correct, async, production-quality POP3 client that handles errors gracefully instead of panicking
-**Current focus:** Phase 7 (Reconnection) COMPLETE — both 07-01 and 07-02 done. Ready for Phase 8 (Connection Pooling).
+**Current focus:** Phase 8 (Connection Pooling) — 08-01 complete. Ready for 08-02 (Pop3Pool registry struct).
 
 ## Current Position
 
-Phase: 7 of 9 (Reconnection) — COMPLETE
-Plan: 2 of 2 in current phase (07-02 just completed)
-Status: 07-02 complete — all 15 ReconnectingClient command wrappers, best-effort quit, read-only accessors, 7 new tests, RECON-01/02/03/04 all satisfied.
-Last activity: 2026-03-02 — Completed 07-02 (Reconnection Command Wrappers)
+Phase: 8 of 9 (Connection Pooling) — In Progress
+Plan: 1 of 2 in current phase (08-01 just completed)
+Status: 08-01 complete — bb8 pool foundation with AccountKey, Pop3ConnectionManager, Pop3PoolError; 13 tests passing, POOL-01/POOL-02 satisfied.
+Last activity: 2026-03-02 — Completed 08-01 (Connection Pooling Foundation)
 
-Progress: [████████░░] 78%
+Progress: [████████░░] 83%
 
 ## Performance Metrics
 
@@ -112,14 +125,16 @@ Progress: [████████░░] 78%
 | 05-pipelining | 2 of 2 completed | ~8 min | ~4 min |
 | 06-uidl-caching | 1 of 1 completed | ~3 min | ~3 min |
 | 07-reconnection | 2 of 2 complete | ~7 min | ~4 min |
+| 08-connection-pooling | 1 of 2 in progress | ~5 min | ~5 min |
 
 **Recent Trend:**
-- Last 5 plans: ~4 min, ~2 min, ~4 min, ~3 min, ~3 min
-- Trend: 07-01 very fast — plan fully specified with exact code, 1 clippy auto-fix (type alias)
+- Last 5 plans: ~4 min, ~2 min, ~4 min, ~3 min, ~5 min
+- Trend: 08-01 fast — plan specified exact code, 2 auto-fixes (bb8 parking_lot disabled, is_valid signature)
 
 *Updated after each plan completion*
 | Phase 06 P01 | 3 | 2 tasks | 1 files |
 | Phase 07-reconnection P01 | 3 | 2 tasks | 3 files |
+| Phase 08-connection-pooling P01 | 5 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -198,6 +213,9 @@ Recent decisions affecting current work:
 - [Phase 07-02]: pub(crate) build_authenticated_mock_client added to client.rs — cleanest way to share mock construction across modules without exposing private Pop3Client struct fields
 - [Phase 07-02]: Full reconnect round-trip tests deferred to integration tests — do_reconnect() calls Pop3ClientBuilder::connect() requiring real TCP, not unit-testable
 - [Phase 07-02]: Best-effort quit silently swallows retryable errors — only non-transient errors propagate from ReconnectingClient::quit()
+- [Phase 08-connection-pooling]: bb8 added with default-features=false to disable parking_lot (dlltool.exe Windows GNU constraint)
+- [Phase 08-connection-pooling]: Pop3PoolError separate from Pop3Error — pool-level errors conceptually distinct from POP3 protocol errors
+- [Phase 08-connection-pooling]: is_valid() returns conn.noop() directly — avoids redundant async block and lifetime annotation issues
 
 ### Pending Todos
 
@@ -217,5 +235,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-02
-Stopped at: Completed 07-02-PLAN.md — all 15 ReconnectingClient command wrappers, best-effort quit, read-only accessors, 7 new tests, 163 unit + 2 integration + 32 doc tests passing, RECON-01/02/03/04 all satisfied, clippy and fmt clean. Phase 7 complete. Ready for Phase 8 (Connection Pooling).
+Stopped at: Completed 08-01-PLAN.md — bb8 pool foundation with AccountKey (Hash+Eq), Pop3ConnectionManager (bb8::ManageConnection), Pop3PoolError (CheckoutTimeout/Connection); 13 unit tests passing, POOL-01/POOL-02 satisfied, clippy and fmt clean. Ready for 08-02 (Pop3Pool registry struct).
 Resume file: None
