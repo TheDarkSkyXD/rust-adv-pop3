@@ -2851,4 +2851,102 @@ mod tests {
         let result = client.prune_seen(&mut seen).await;
         assert!(matches!(result, Err(Pop3Error::NotAuthenticated)));
     }
+
+    #[cfg(feature = "mime")]
+    #[tokio::test]
+    async fn retr_parsed_returns_structured_message() {
+        let mock = Builder::new()
+            .write(b"RETR 1\r\n")
+            .read(
+                b"+OK\r\n\
+From: alice@example.com\r\n\
+To: bob@example.com\r\n\
+Subject: Hello\r\n\
+Date: Mon, 1 Jan 2024 12:00:00 +0000\r\n\
+\r\n\
+Body text\r\n\
+.\r\n",
+            )
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let parsed = client.retr_parsed(1).await.unwrap();
+        assert_eq!(parsed.subject(), Some("Hello"));
+        assert!(parsed.body_text(0).is_some());
+    }
+
+    #[cfg(feature = "mime")]
+    #[tokio::test]
+    async fn retr_parsed_returns_mime_error_for_malformed_message() {
+        // Completely empty body (no blank line, just the dot terminator) -- mail-parser
+        // returns None only for zero-length input; "+OK\r\n.\r\n" produces data = ""
+        let mock = Builder::new()
+            .write(b"RETR 1\r\n")
+            .read(b"+OK\r\n.\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let result = client.retr_parsed(1).await;
+        assert!(matches!(result, Err(Pop3Error::MimeParse(ref msg)) if msg.contains("message 1")));
+    }
+
+    #[cfg(feature = "mime")]
+    #[tokio::test]
+    async fn top_parsed_returns_structured_headers() {
+        let mock = Builder::new()
+            .write(b"TOP 1 0\r\n")
+            .read(
+                b"+OK\r\n\
+From: alice@example.com\r\n\
+Subject: Headers Only\r\n\
+\r\n\
+.\r\n",
+            )
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let parsed = client.top_parsed(1, 0).await.unwrap();
+        assert_eq!(parsed.subject(), Some("Headers Only"));
+    }
+
+    #[cfg(feature = "mime")]
+    #[tokio::test]
+    async fn retr_parsed_handles_multipart_mime() {
+        let mock = Builder::new()
+            .write(b"RETR 2\r\n")
+            .read(
+                b"+OK\r\n\
+From: alice@example.com\r\n\
+Subject: MIME test\r\n\
+Content-Type: multipart/alternative; boundary=\"boundary42\"\r\n\
+\r\n\
+--boundary42\r\n\
+Content-Type: text/plain\r\n\
+\r\n\
+Plain text body\r\n\
+--boundary42\r\n\
+Content-Type: text/html\r\n\
+\r\n\
+<html><body>HTML body</body></html>\r\n\
+--boundary42--\r\n\
+.\r\n",
+            )
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let parsed = client.retr_parsed(2).await.unwrap();
+        assert_eq!(parsed.subject(), Some("MIME test"));
+        assert!(parsed.body_text(0).is_some());
+        assert!(parsed.body_html(0).is_some());
+    }
+
+    #[cfg(feature = "mime")]
+    #[tokio::test]
+    async fn top_parsed_returns_mime_error_for_garbage() {
+        // Completely empty body (no blank line, just the dot terminator) -- mail-parser
+        // returns None only for zero-length input; "+OK\r\n.\r\n" produces data = ""
+        let mock = Builder::new()
+            .write(b"TOP 3 5\r\n")
+            .read(b"+OK\r\n.\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let result = client.top_parsed(3, 5).await;
+        assert!(matches!(result, Err(Pop3Error::MimeParse(ref msg)) if msg.contains("message 3")));
+    }
 }
