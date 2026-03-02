@@ -22,6 +22,7 @@ use std::time::Duration;
 use crate::builder::Pop3ClientBuilder;
 use crate::client::Pop3Client;
 use crate::error::Pop3Error;
+use crate::types::SessionState;
 
 /// Identifies a unique POP3 mailbox account for pool management.
 ///
@@ -61,6 +62,15 @@ impl std::fmt::Display for AccountKey {
 /// Each manager stores a cloned [`Pop3ClientBuilder`] and credentials.
 /// On [`connect()`](bb8::ManageConnection::connect), it clones the builder,
 /// connects, and authenticates via USER/PASS.
+///
+/// # Authentication
+///
+/// If the builder already authenticated the client (because credentials were
+/// configured on the builder via
+/// [`Pop3ClientBuilder::credentials()`](crate::Pop3ClientBuilder::credentials)),
+/// the `login()` step is skipped automatically. The client's
+/// [`SessionState`](crate::SessionState) is checked after `connect()` to
+/// prevent issuing a redundant `USER`/`PASS` exchange.
 pub struct Pop3ConnectionManager {
     builder: Pop3ClientBuilder,
     username: String,
@@ -101,7 +111,12 @@ impl bb8::ManageConnection for Pop3ConnectionManager {
                 return Err(Pop3Error::InvalidInput);
             }
             let mut client = builder.connect().await?;
-            client.login(&username, &password).await?;
+            // Guard: builder.connect() auto-authenticates when credentials are
+            // configured on the builder. Skip login() if the session is already
+            // in Authenticated state to prevent a redundant USER/PASS exchange.
+            if client.state() != SessionState::Authenticated {
+                client.login(&username, &password).await?;
+            }
             Ok(client)
         }
     }
@@ -345,6 +360,7 @@ mod tests {
 
     use super::*;
     use crate::client::build_authenticated_mock_client;
+    use crate::types::SessionState;
 
     fn make_key(host: &str, port: u16, username: &str) -> AccountKey {
         AccountKey::new(host, port, username)
@@ -462,6 +478,17 @@ mod tests {
         let manager =
             Pop3ConnectionManager::new(Pop3ClientBuilder::new("localhost"), "user", "pass");
         assert!(manager.has_broken(&mut client));
+    }
+
+    // --- double-login guard tests ---
+
+    #[tokio::test]
+    async fn authenticated_client_state_is_authenticated() {
+        // Validates the precondition the double-login guard relies on:
+        // build_authenticated_mock_client produces SessionState::Authenticated.
+        let mock = tokio_test::io::Builder::new().build();
+        let client = build_authenticated_mock_client(mock);
+        assert_eq!(client.state(), SessionState::Authenticated);
     }
 
     // --- PoolConfig tests ---
