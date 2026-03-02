@@ -97,6 +97,7 @@ compile_error!(
 mod builder;
 mod client;
 mod error;
+pub mod reconnect;
 pub(crate) mod response;
 mod transport;
 mod types;
@@ -104,4 +105,5 @@ mod types;
 pub use builder::Pop3ClientBuilder;
 pub use client::Pop3Client;
 pub use error::{Pop3Error, Result};
+pub use reconnect::{Outcome, ReconnectingClient, ReconnectingClientBuilder};
 pub use types::{Capability, ListEntry, Message, SessionState, Stat, UidlEntry};
