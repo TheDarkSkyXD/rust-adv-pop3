@@ -1,5 +1,5 @@
 {
-  "model_profile": "quality",
+  "model_profile": "balanced",
   "workflow": {
     "research": true,
     "plan_check": true,
@@ -7,7 +7,6 @@
     "auto_advance": false,
     "nyquist_validation": true,
     "parallel_waves": true,
-    "agent_count": 4,
     "post_plan_auto_execute": false
   },
   "git": {
