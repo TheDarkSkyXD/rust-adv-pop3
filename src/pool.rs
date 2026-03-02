@@ -414,3 +414,472 @@ impl Pop3Pool {
         guard.contains_key(&key)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::Future;
+
+    // =========================================================================
+    // Mock infrastructure for bb8 pool behavior tests (no POP3 involved)
+    // =========================================================================
+
+    #[derive(Debug, Default)]
+    struct FakeConn;
+
+    #[derive(Debug)]
+    struct FakeError;
+
+    impl std::fmt::Display for FakeError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "fake error")
+        }
+    }
+
+    impl std::error::Error for FakeError {}
+
+    struct AlwaysOkManager;
+
+    impl bb8::ManageConnection for AlwaysOkManager {
+        type Connection = FakeConn;
+        type Error = FakeError;
+
+        fn connect(&self) -> impl Future<Output = Result<Self::Connection, Self::Error>> + Send {
+            async { Ok(FakeConn) }
+        }
+
+        fn is_valid(
+            &self,
+            _conn: &mut Self::Connection,
+        ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+            async { Ok(()) }
+        }
+
+        fn has_broken(&self, _conn: &mut Self::Connection) -> bool {
+            false
+        }
+    }
+
+    struct AlwaysBrokenManager;
+
+    impl bb8::ManageConnection for AlwaysBrokenManager {
+        type Connection = FakeConn;
+        type Error = FakeError;
+
+        fn connect(&self) -> impl Future<Output = Result<Self::Connection, Self::Error>> + Send {
+            async { Ok(FakeConn) }
+        }
+
+        fn is_valid(
+            &self,
+            _conn: &mut Self::Connection,
+        ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+            async { Ok(()) }
+        }
+
+        fn has_broken(&self, _conn: &mut Self::Connection) -> bool {
+            true
+        }
+    }
+
+    // =========================================================================
+    // Group 1: Pop3ConnectionManager unit tests
+    // =========================================================================
+
+    mod manager_tests {
+        use super::*;
+        use tokio_test::io::Builder;
+
+        fn make_manager() -> Pop3ConnectionManager {
+            let builder = crate::builder::Pop3ClientBuilder::new("pop.example.com")
+                .credentials("alice", "secret");
+            Pop3ConnectionManager::new(builder)
+        }
+
+        #[tokio::test]
+        async fn manager_is_valid_sends_noop_and_succeeds() {
+            let mock = Builder::new().write(b"NOOP\r\n").read(b"+OK\r\n").build();
+            let mut client = crate::client::build_authenticated_mock_client(mock);
+            let manager = make_manager();
+            manager.is_valid(&mut client).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn manager_is_valid_fails_on_server_error() {
+            let mock = Builder::new()
+                .write(b"NOOP\r\n")
+                .read(b"-ERR server error\r\n")
+                .build();
+            let mut client = crate::client::build_authenticated_mock_client(mock);
+            let manager = make_manager();
+            let result = manager.is_valid(&mut client).await;
+            assert!(result.is_err());
+        }
+
+        #[tokio::test]
+        async fn manager_is_valid_fails_on_eof() {
+            // Mock that writes NOOP but gets no response (simulates EOF)
+            let mock = Builder::new().write(b"NOOP\r\n").build();
+            let mut client = crate::client::build_authenticated_mock_client(mock);
+            let manager = make_manager();
+            let result = manager.is_valid(&mut client).await;
+            assert!(result.is_err());
+        }
+
+        #[tokio::test]
+        async fn manager_has_broken_returns_false_for_live_client() {
+            // A fresh authenticated mock client is not closed
+            let mock = Builder::new().build();
+            let mut client = crate::client::build_authenticated_mock_client(mock);
+            let manager = make_manager();
+            assert!(!manager.has_broken(&mut client));
+        }
+
+        #[tokio::test]
+        async fn manager_has_broken_returns_true_for_closed_client() {
+            // Write NOOP but provide no response — reading will fail (EOF)
+            // which marks the client as closed.
+            let mock = Builder::new().write(b"NOOP\r\n").build();
+            let mut client = crate::client::build_authenticated_mock_client(mock);
+            // Trigger a NOOP which will fail on EOF, marking the connection closed
+            let _ = client.noop().await;
+            let manager = make_manager();
+            assert!(manager.has_broken(&mut client));
+        }
+    }
+
+    // =========================================================================
+    // Group 2: bb8 pool behavior tests (FakeConn / AlwaysOkManager)
+    // =========================================================================
+
+    mod pool_behavior_tests {
+        use super::*;
+
+        #[tokio::test]
+        async fn pool_checkout_succeeds() {
+            let pool = bb8::Pool::builder()
+                .max_size(1)
+                .build(AlwaysOkManager)
+                .await
+                .unwrap();
+            let _conn = pool.get().await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn pool_connection_returned_on_drop() {
+            let pool = bb8::Pool::builder()
+                .max_size(1)
+                .build(AlwaysOkManager)
+                .await
+                .unwrap();
+
+            {
+                let _conn = pool.get().await.unwrap();
+                assert_eq!(pool.state().idle_connections, 0);
+                // _conn drops here, returning to pool
+            }
+
+            assert_eq!(pool.state().idle_connections, 1);
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn pool_checkout_times_out_when_exhausted() {
+            use tokio::sync::oneshot;
+
+            let pool = bb8::Pool::builder()
+                .max_size(1)
+                .connection_timeout(Duration::from_millis(100))
+                .retry_connection(false)
+                .build(AlwaysOkManager)
+                .await
+                .unwrap();
+
+            // Hold the single connection in a spawned task
+            let (hold_tx, hold_rx) = oneshot::channel::<()>();
+            let pool_clone = pool.clone();
+            tokio::spawn(async move {
+                let _conn = pool_clone.get().await.unwrap();
+                hold_tx.send(()).unwrap();
+                // Hold forever
+                tokio::time::sleep(Duration::from_secs(10)).await;
+            });
+
+            // Wait until the task has the connection
+            hold_rx.await.unwrap();
+
+            // Second checkout must time out
+            let result = pool.get().await;
+            assert!(matches!(result, Err(bb8::RunError::TimedOut)));
+        }
+
+        #[tokio::test]
+        async fn pool_statistics_track_connections_created() {
+            let pool = bb8::Pool::builder()
+                .max_size(1)
+                .build(AlwaysOkManager)
+                .await
+                .unwrap();
+
+            let _conn = pool.get().await.unwrap();
+            assert_eq!(pool.state().statistics.connections_created, 1);
+        }
+
+        #[tokio::test]
+        async fn broken_connection_is_discarded_not_returned() {
+            let pool = bb8::Pool::builder()
+                .max_size(1)
+                .build(AlwaysBrokenManager)
+                .await
+                .unwrap();
+
+            let _conn = pool.get().await.unwrap();
+            drop(_conn);
+
+            // bb8 detects has_broken() == true on return, closes the connection
+            assert_eq!(pool.state().statistics.connections_closed_broken, 1);
+            assert_eq!(pool.state().idle_connections, 0);
+        }
+    }
+
+    // =========================================================================
+    // Group 3: Pop3Pool registry tests
+    // =========================================================================
+
+    mod registry_tests {
+        use super::*;
+
+        fn make_pool() -> Pop3Pool {
+            Pop3Pool::new(Pop3PoolConfig::default())
+        }
+
+        fn builder_with_credentials() -> crate::builder::Pop3ClientBuilder {
+            crate::builder::Pop3ClientBuilder::new("pop.example.com")
+                .port(110)
+                .credentials("alice", "secret")
+        }
+
+        fn builder_no_credentials() -> crate::builder::Pop3ClientBuilder {
+            crate::builder::Pop3ClientBuilder::new("pop.example.com").port(110)
+        }
+
+        #[tokio::test]
+        async fn add_account_creates_pool() {
+            let pool = make_pool();
+            let key = pool.add_account(builder_with_credentials()).await.unwrap();
+            assert_eq!(key.host, "pop.example.com");
+            assert_eq!(key.port, 110);
+            assert_eq!(key.username, "alice");
+        }
+
+        #[tokio::test]
+        async fn add_account_rejects_no_credentials() {
+            let pool = make_pool();
+            let result = pool.add_account(builder_no_credentials()).await;
+            assert!(matches!(result, Err(Pop3PoolError::NoCredentials(_))));
+        }
+
+        #[tokio::test]
+        async fn get_returns_account_not_found() {
+            let pool = make_pool();
+            let result = pool.get("unknown.example.com", 110, "nobody").await;
+            assert!(matches!(result, Err(Pop3PoolError::AccountNotFound(_))));
+        }
+
+        #[tokio::test]
+        async fn remove_account_returns_true_if_present() {
+            let pool = make_pool();
+            pool.add_account(builder_with_credentials()).await.unwrap();
+            let removed = pool.remove_account("pop.example.com", 110, "alice").await;
+            assert!(removed);
+        }
+
+        #[tokio::test]
+        async fn remove_account_returns_false_if_absent() {
+            let pool = make_pool();
+            let removed = pool
+                .remove_account("nonexistent.example.com", 110, "nobody")
+                .await;
+            assert!(!removed);
+        }
+
+        #[tokio::test]
+        async fn pool_count_tracks_accounts() {
+            let pool = make_pool();
+            let b1 = crate::builder::Pop3ClientBuilder::new("pop1.example.com")
+                .port(110)
+                .credentials("alice", "secret");
+            let b2 = crate::builder::Pop3ClientBuilder::new("pop2.example.com")
+                .port(110)
+                .credentials("bob", "secret");
+            pool.add_account(b1).await.unwrap();
+            pool.add_account(b2).await.unwrap();
+            assert_eq!(pool.pool_count().await, 2);
+        }
+
+        #[tokio::test]
+        async fn contains_account_true_after_add() {
+            let pool = make_pool();
+            pool.add_account(builder_with_credentials()).await.unwrap();
+            assert!(pool.contains_account("pop.example.com", 110, "alice").await);
+        }
+
+        #[tokio::test]
+        async fn contains_account_false_before_add() {
+            let pool = make_pool();
+            assert!(!pool.contains_account("pop.example.com", 110, "alice").await);
+        }
+
+        #[tokio::test]
+        async fn accounts_returns_all_keys() {
+            let pool = make_pool();
+            let b1 = crate::builder::Pop3ClientBuilder::new("pop1.example.com")
+                .port(110)
+                .credentials("alice", "secret");
+            let b2 = crate::builder::Pop3ClientBuilder::new("pop2.example.com")
+                .port(110)
+                .credentials("bob", "secret");
+            pool.add_account(b1).await.unwrap();
+            pool.add_account(b2).await.unwrap();
+
+            let mut keys = pool.accounts().await;
+            keys.sort_by(|a, b| a.host.cmp(&b.host));
+            assert_eq!(keys.len(), 2);
+            assert_eq!(keys[0].host, "pop1.example.com");
+            assert_eq!(keys[1].host, "pop2.example.com");
+        }
+
+        #[tokio::test]
+        async fn add_account_is_idempotent_same_key() {
+            let pool = make_pool();
+            pool.add_account(builder_with_credentials()).await.unwrap();
+            pool.add_account(builder_with_credentials()).await.unwrap();
+            // Should still be 1 pool, not 2
+            assert_eq!(pool.pool_count().await, 1);
+        }
+
+        #[tokio::test]
+        async fn remove_account_and_contains_returns_false() {
+            let pool = make_pool();
+            pool.add_account(builder_with_credentials()).await.unwrap();
+            pool.remove_account("pop.example.com", 110, "alice").await;
+            assert!(!pool.contains_account("pop.example.com", 110, "alice").await);
+        }
+    }
+
+    // =========================================================================
+    // Group 4: AccountKey and error type tests
+    // =========================================================================
+
+    mod type_tests {
+        use super::*;
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        fn make_key() -> AccountKey {
+            AccountKey {
+                host: "pop.example.com".to_string(),
+                port: 110,
+                username: "alice".to_string(),
+            }
+        }
+
+        #[test]
+        fn account_key_display() {
+            let key = make_key();
+            assert_eq!(format!("{key}"), "alice@pop.example.com:110");
+        }
+
+        #[test]
+        fn account_key_equality() {
+            let k1 = make_key();
+            let k2 = make_key();
+            assert_eq!(k1, k2);
+        }
+
+        #[test]
+        fn account_key_inequality_different_username() {
+            let k1 = make_key();
+            let k2 = AccountKey {
+                host: "pop.example.com".to_string(),
+                port: 110,
+                username: "bob".to_string(),
+            };
+            assert_ne!(k1, k2);
+        }
+
+        #[test]
+        fn account_key_hash_consistency() {
+            let k1 = make_key();
+            let k2 = make_key();
+
+            let mut h1 = DefaultHasher::new();
+            k1.hash(&mut h1);
+            let hash1 = h1.finish();
+
+            let mut h2 = DefaultHasher::new();
+            k2.hash(&mut h2);
+            let hash2 = h2.finish();
+
+            assert_eq!(hash1, hash2);
+        }
+
+        #[test]
+        fn pool_error_from_pop3_error() {
+            let pop3_err = crate::Pop3Error::Timeout;
+            let pool_err: Pop3PoolError = pop3_err.into();
+            assert!(matches!(pool_err, Pop3PoolError::Client(_)));
+        }
+
+        #[test]
+        fn pool_error_from_run_error_timed_out() {
+            let run_err: bb8::RunError<crate::Pop3Error> = bb8::RunError::TimedOut;
+            let pool_err: Pop3PoolError = run_err.into();
+            assert!(matches!(pool_err, Pop3PoolError::Pool(_)));
+        }
+
+        #[test]
+        fn pool_error_display_client() {
+            let err = Pop3PoolError::Client(crate::Pop3Error::Timeout);
+            let s = format!("{err}");
+            assert!(!s.is_empty());
+            assert!(s.contains("POP3"));
+        }
+
+        #[test]
+        fn pool_error_display_account_not_found() {
+            let key = make_key();
+            let err = Pop3PoolError::AccountNotFound(key);
+            let s = format!("{err}");
+            assert!(s.contains("account not found") || s.contains("not found"));
+        }
+
+        #[test]
+        fn pool_error_display_no_credentials() {
+            let key = make_key();
+            let err = Pop3PoolError::NoCredentials(key);
+            let s = format!("{err}");
+            assert!(s.contains("credentials") || s.contains("no credentials"));
+        }
+
+        #[test]
+        fn pool_error_display_pool_timed_out() {
+            let err = Pop3PoolError::Pool(bb8::RunError::TimedOut);
+            let s = format!("{err}");
+            assert!(!s.is_empty());
+        }
+
+        #[test]
+        fn account_key_clone() {
+            let k = make_key();
+            let k2 = k.clone();
+            assert_eq!(k, k2);
+        }
+
+        #[test]
+        fn pop3_pool_config_default() {
+            let cfg = Pop3PoolConfig::default();
+            assert_eq!(cfg.connection_timeout, Duration::from_secs(30));
+            assert!(cfg.test_on_check_out);
+        }
+    }
+}
