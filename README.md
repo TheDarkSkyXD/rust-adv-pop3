@@ -4,7 +4,7 @@ A modern, safe, async POP3 client library for Rust, powered by Tokio.
 
 [![CI](https://github.com/TheDarkSkyXD/rust-adv-pop3/actions/workflows/ci.yml/badge.svg)](https://github.com/TheDarkSkyXD/rust-adv-pop3/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/pop3.svg)](https://crates.io/crates/pop3)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ## Features
 
