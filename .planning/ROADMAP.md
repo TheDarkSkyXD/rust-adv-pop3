@@ -32,6 +32,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Gap Closure:**
 - [x] **Phase 10: Tech Debt Cleanup** - Pool double-login guard, stale dead_code removal, ROADMAP checkbox fix (gap closure from audit, completed 2026-03-01)
 
+
 ## Phase Details
 
 ### Phase 1: Foundation
@@ -130,6 +131,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] 07-01-PLAN.md — backon dependency, SessionReset ZST, ReconnectingClientBuilder, ReconnectingClient struct + retry infrastructure (RECON-01, RECON-02, RECON-04)
 - [x] 07-02-PLAN.md — All delegating command methods, lib.rs re-exports, tests covering all four RECON requirements (RECON-01, RECON-02, RECON-03, RECON-04)
 
+
 ### Phase 8: Connection Pooling
 **Goal**: Callers can manage multiple POP3 accounts concurrently using a pool that enforces the RFC 1939 exclusive-lock constraint at the type level and in documentation
 **Depends on**: Phase 5 (requires `is_closed()` and builder `Clone`), Phase 7 (requires stable error types and reconnect-aware connection lifecycle)
@@ -160,6 +162,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. ROADMAP.md Phase 7 plan checkboxes are checked (already done in this update)
 **Plans**: 1 plan
 - [x] 10-01-PLAN.md — Remove stale dead_code annotations and plan references from transport.rs, add double-login guard to pool connection manager (gap closure)
+
 
 ## Progress
 
