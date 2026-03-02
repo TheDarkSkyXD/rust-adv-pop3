@@ -71,3 +71,26 @@ pub struct Capability {
     /// Optional capability arguments (e.g., `["PLAIN", "GSSAPI"]` for `SASL`).
     pub arguments: Vec<String>,
 }
+
+/// A parsed RFC 5322 / MIME email message.
+///
+/// This is a type alias for [`mail_parser::Message<'static>`](https://docs.rs/mail-parser/0.11/mail_parser/struct.Message.html)
+/// from `mail-parser` 0.11.x.  The message owns all its data (no borrowed
+/// references), so it can be stored, moved, and sent across threads freely.
+///
+/// Common accessors:
+///
+/// | Method | Returns | Description |
+/// |--------|---------|-------------|
+/// | [`subject()`](https://docs.rs/mail-parser/0.11/mail_parser/struct.Message.html#method.subject) | `Option<&str>` | The `Subject` header |
+/// | [`from()`](https://docs.rs/mail-parser/0.11/mail_parser/struct.Message.html#method.from) | `Option<&Address>` | The `From` header |
+/// | [`body_text(0)`](https://docs.rs/mail-parser/0.11/mail_parser/struct.Message.html#method.body_text) | `Option<Cow<str>>` | First text/plain body part |
+/// | [`body_html(0)`](https://docs.rs/mail-parser/0.11/mail_parser/struct.Message.html#method.body_html) | `Option<Cow<str>>` | First text/html body part |
+/// | [`attachment_count()`](https://docs.rs/mail-parser/0.11/mail_parser/struct.Message.html#method.attachment_count) | `usize` | Number of attachments |
+///
+/// See the [mail-parser documentation](https://docs.rs/mail-parser/0.11/mail_parser/struct.Message.html)
+/// for the full API.
+///
+/// Requires the `mime` feature flag.
+#[cfg(feature = "mime")]
+pub type ParsedMessage = mail_parser::Message<'static>;

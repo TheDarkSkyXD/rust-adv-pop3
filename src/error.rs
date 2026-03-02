@@ -82,6 +82,17 @@ pub enum Pop3Error {
     /// variant for reconnection logic.
     #[error("connection closed")]
     ConnectionClosed,
+
+    /// Failed to parse the retrieved message as a valid RFC 5322 / MIME structure.
+    ///
+    /// Returned by [`Pop3Client::retr_parsed()`](crate::Pop3Client::retr_parsed)
+    /// when `mail-parser` cannot extract any recognizable headers from the
+    /// retrieved bytes.  This means the POP3 retrieval itself succeeded but
+    /// the content is not a valid email message.
+    ///
+    /// Requires the `mime` feature flag.
+    #[error("MIME parse error: {0}")]
+    MimeParse(String),
 }
 
 /// A specialized `Result` type for POP3 operations.

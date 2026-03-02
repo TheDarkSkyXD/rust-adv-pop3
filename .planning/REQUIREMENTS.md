@@ -74,27 +74,27 @@ Requirements for v3.0 release. Each maps to roadmap phases 5+.
 
 ### UIDL Caching
 
-- [ ] **CACHE-01**: Client provides an API to filter the UIDL list against a set of previously-seen UIDs
-- [ ] **CACHE-02**: Client provides a `fetch_new()` convenience method returning only unseen messages
-- [ ] **CACHE-03**: UIDL cache reconciliation prunes ghost entries (UIDs no longer on server) on each connect
+- [x] **CACHE-01**: Client provides an API to filter the UIDL list against a set of previously-seen UIDs
+- [x] **CACHE-02**: Client provides a `fetch_new()` convenience method returning only unseen messages
+- [x] **CACHE-03**: UIDL cache reconciliation prunes ghost entries (UIDs no longer on server) on each connect
 
 ### Reconnection
 
-- [ ] **RECON-01**: Client provides automatic reconnection with exponential backoff on connection drop
-- [ ] **RECON-02**: Reconnection retries only on I/O errors — authentication failures propagate immediately
-- [ ] **RECON-03**: Reconnection explicitly surfaces session-state loss (DELE marks are not preserved) to caller
-- [ ] **RECON-04**: Backoff uses jitter to prevent thundering herd
+- [x] **RECON-01**: Client provides automatic reconnection with exponential backoff on connection drop
+- [x] **RECON-02**: Reconnection retries only on I/O errors — authentication failures propagate immediately
+- [x] **RECON-03**: Reconnection explicitly surfaces session-state loss (DELE marks are not preserved) to caller
+- [x] **RECON-04**: Backoff uses jitter to prevent thundering herd
 
 ### Connection Pooling
 
-- [ ] **POOL-01**: Client provides a connection pool for multi-account scenarios via `bb8`
-- [ ] **POOL-02**: Pool enforces max 1 connection per mailbox (RFC 1939 exclusive lock)
-- [ ] **POOL-03**: Pool documentation prominently warns that POP3 forbids concurrent access to the same mailbox
+- [x] **POOL-01**: Client provides a connection pool for multi-account scenarios via `bb8`
+- [x] **POOL-02**: Pool enforces max 1 connection per mailbox (RFC 1939 exclusive lock)
+- [x] **POOL-03**: Pool documentation prominently warns that POP3 forbids concurrent access to the same mailbox
 
 ### MIME Integration
 
-- [ ] **MIME-01**: Client provides `retr_parsed()` method behind a `mime` feature flag
-- [ ] **MIME-02**: MIME integration uses `mail-parser` crate (zero external deps, RFC 5322 + MIME conformant)
+- [x] **MIME-01**: Client provides `retr_parsed()` method behind a `mime` feature flag
+- [x] **MIME-02**: MIME integration uses `mail-parser` crate (zero external deps, RFC 5322 + MIME conformant)
 
 ## v4.0 Requirements
 
@@ -165,18 +165,18 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PIPE-03 | Phase 5 | Complete (05-02) |
 | PIPE-04 | Phase 5 | Complete (05-02) |
 | PIPE-05 | Phase 5 | Complete (05-02) |
-| CACHE-01 | Phase 6 | Pending |
-| CACHE-02 | Phase 6 | Pending |
-| CACHE-03 | Phase 6 | Pending |
-| RECON-01 | Phase 7 | Pending |
-| RECON-02 | Phase 7 | Pending |
-| RECON-03 | Phase 7 | Pending |
-| RECON-04 | Phase 7 | Pending |
-| POOL-01 | Phase 8 | Pending |
-| POOL-02 | Phase 8 | Pending |
-| POOL-03 | Phase 8 | Pending |
-| MIME-01 | Phase 9 | Pending |
-| MIME-02 | Phase 9 | Pending |
+| CACHE-01 | Phase 6 | Complete |
+| CACHE-02 | Phase 6 | Complete |
+| CACHE-03 | Phase 6 | Complete |
+| RECON-01 | Phase 7 | Complete |
+| RECON-02 | Phase 7 | Complete |
+| RECON-03 | Phase 7 | Complete |
+| RECON-04 | Phase 7 | Complete |
+| POOL-01 | Phase 8 | Complete |
+| POOL-02 | Phase 8 | Complete |
+| POOL-03 | Phase 8 | Complete |
+| MIME-01 | Phase 9 | Complete |
+| MIME-02 | Phase 9 | Complete |
 
 **Coverage:**
 - v2.0 requirements: 32 total, mapped to phases 1-4: 32

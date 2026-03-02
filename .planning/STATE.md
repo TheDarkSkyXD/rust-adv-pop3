@@ -3,6 +3,123 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: milestone
 status: unknown
+last_updated: "2026-03-02T05:06:24.779Z"
+progress:
+  total_phases: 10
+  completed_phases: 10
+  total_plans: 21
+  completed_plans: 21
+---
+
+---
+gsd_state_version: 1.0
+milestone: v2.0
+milestone_name: milestone
+status: unknown
+last_updated: "2026-03-02T04:32:06.213Z"
+progress:
+  total_phases: 9
+  completed_phases: 9
+  total_plans: 20
+  completed_plans: 20
+---
+
+---
+gsd_state_version: 1.0
+milestone: v2.0
+milestone_name: milestone
+status: unknown
+last_updated: "2026-03-02T04:28:03.708Z"
+progress:
+  total_phases: 9
+  completed_phases: 9
+  total_plans: 20
+  completed_plans: 20
+---
+
+---
+gsd_state_version: 1.0
+milestone: v2.0
+milestone_name: milestone
+status: unknown
+last_updated: "2026-03-02T04:00:38.639Z"
+progress:
+  total_phases: 9
+  completed_phases: 8
+  total_plans: 19
+  completed_plans: 19
+---
+
+---
+gsd_state_version: 1.0
+milestone: v2.0
+milestone_name: milestone
+status: unknown
+last_updated: "2026-03-02T03:52:32.077Z"
+progress:
+  total_phases: 9
+  completed_phases: 7
+  total_plans: 19
+  completed_plans: 18
+---
+
+---
+gsd_state_version: 1.0
+milestone: v2.0
+milestone_name: milestone
+status: unknown
+last_updated: "2026-03-02T02:47:23.923Z"
+progress:
+  total_phases: 9
+  completed_phases: 7
+  total_plans: 17
+  completed_plans: 17
+---
+
+---
+gsd_state_version: 1.0
+milestone: v2.0
+milestone_name: milestone
+status: unknown
+last_updated: "2026-03-02T02:36:10.737Z"
+progress:
+  total_phases: 9
+  completed_phases: 6
+  total_plans: 17
+  completed_plans: 16
+---
+
+---
+gsd_state_version: 1.0
+milestone: v2.0
+milestone_name: milestone
+status: unknown
+last_updated: "2026-03-02T02:02:55.778Z"
+progress:
+  total_phases: 9
+  completed_phases: 6
+  total_plans: 15
+  completed_plans: 15
+---
+
+---
+gsd_state_version: 1.0
+milestone: v2.0
+milestone_name: milestone
+status: unknown
+last_updated: "2026-03-02T01:57:47.392Z"
+progress:
+  total_phases: 9
+  completed_phases: 6
+  total_plans: 15
+  completed_plans: 15
+---
+
+---
+gsd_state_version: 1.0
+milestone: v2.0
+milestone_name: milestone
+status: unknown
 last_updated: "2026-03-02T01:23:56.179Z"
 progress:
   total_phases: 9
@@ -31,16 +148,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-01)
 
 **Core value:** Provide a correct, async, production-quality POP3 client that handles errors gracefully instead of panicking
-**Current focus:** Phase 5 (Pipelining) COMPLETE — both 05-01 and 05-02 done. Ready for Phase 6 (UIDL Caching).
+**Current focus:** Phase 10 (Tech Debt Cleanup) — COMPLETE. All 9 planned phases done + gap closure phase complete.
 
 ## Current Position
 
-Phase: 5 of 9 (Pipelining) — COMPLETE
-Plan: 2 of 2 in current phase (just completed 05-02)
-Status: 05-02 complete — CAPA-based pipelining detection in login/apop, supports_pipelining() accessor, retr_many/dele_many batch methods with windowed pipelined path and sequential fallback, 124 unit + 2 integration + 27 doc tests passing.
-Last activity: 2026-03-02 — Completed 05-02 (CAPA Pipelining Detection + Batch Methods)
+Phase: 10 of 10 (Tech Debt Cleanup) — Complete
+Plan: 1 of 1 in current phase (10-01 just completed)
+Status: Phase 10 complete — removed 3 stale #[allow(dead_code)] annotations and plan-phase references from transport.rs; added double-login guard (SessionState check) to Pop3ConnectionManager::connect(), auth rustdoc, and unit test. ALL PHASES COMPLETE (including gap-closure phase 10).
+Last activity: 2026-03-01 — Completed 10-01 (Tech Debt Cleanup)
 
-Progress: [█████░░░░░] 56%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -57,13 +174,24 @@ Progress: [█████░░░░░] 56%
 | 02-async-core | 4 | ~40 min | ~10 min |
 | 03-tls-and-publish | 4 completed | ~60 min | ~15 min |
 | 04-protocol-extensions | 2 of 2 completed | ~6 min | ~3 min |
-| 05-pipelining | 1 of 2 completed | ~4 min | ~4 min |
+| 05-pipelining | 2 of 2 completed | ~8 min | ~4 min |
+| 06-uidl-caching | 1 of 1 completed | ~3 min | ~3 min |
+| 07-reconnection | 2 of 2 complete | ~7 min | ~4 min |
+| 08-connection-pooling | 2 of 2 complete | ~9 min | ~5 min |
+| 09-mime-integration | 1 of 1 complete | ~4 min | ~4 min |
+| 10-tech-debt-cleanup | 1 of 1 complete | ~8 min | ~8 min |
 
 **Recent Trend:**
-- Last 5 plans: ~8 min, ~45 min, ~4 min, ~2 min, ~4 min
-- Trend: 05-01 fast — very specific plan with all details spelled out, 2 small auto-fixes (lint + test mock)
+- Last 5 plans: ~2 min, ~4 min, ~3 min, ~5 min, ~4 min
+- Trend: 09-01 fast — plan specified exact code, 2 auto-fixes (error-path mock data, rustfmt formatting)
 
 *Updated after each plan completion*
+| Phase 06 P01 | 3 | 2 tasks | 1 files |
+| Phase 07-reconnection P01 | 3 | 2 tasks | 3 files |
+| Phase 08-connection-pooling P01 | 5 | 2 tasks | 3 files |
+| Phase 08-connection-pooling P02 | 4 | 2 tasks | 2 files |
+| Phase 09-mime-integration P09-01 | 4 | 2 tasks | 7 files |
+| Phase 10-tech-debt-cleanup P10-01 | 8 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -132,6 +260,26 @@ Recent decisions affecting current work:
 - [05-02]: PIPELINE_WINDOW = 4 — conservative window preventing TCP send-buffer deadlock with large RETR responses
 - [05-02]: Per-item results Vec<Result<T>> for batch methods — individual -ERR does not abort batch; I/O errors fill remaining with ConnectionClosed
 - [05-02]: retr_many_pipelined/dele_many_pipelined are private — only retr_many/dele_many are public API; read_retr_response() private helper avoids parsing duplication
+- [Phase 06-01]: No require_auth() calls in wrapper methods — auth enforced by delegated uidl() and retr()
+- [Phase 06-01]: fetch_unseen fails fast on first retr() error — no partial results returned
+- [Phase 06-01]: Section heading doc comment immediately precedes first method doc to satisfy clippy::empty_line_after_doc_comments
+- [Phase 07-01]: ReconnectCallback type alias for Option<Box<dyn FnMut(u32, &Pop3Error) + Send>> avoids clippy::type_complexity on both builder and client structs
+- [Phase 07-01]: is_retryable covers Io, ConnectionClosed, Timeout, SysTemp — AuthFailed excluded to prevent account lockout risk
+- [Phase 07-01]: Credentials passed to connect() not stored on builder — minimises time credentials exist in plain-text builder fields
+- [Phase 07-02]: fetch_unseen wraps Vec<(UidlEntry, Message)> — matches actual Pop3Client return type; plan template showed Vec<Message> which was incorrect
+- [Phase 07-02]: pub(crate) build_authenticated_mock_client added to client.rs — cleanest way to share mock construction across modules without exposing private Pop3Client struct fields
+- [Phase 07-02]: Full reconnect round-trip tests deferred to integration tests — do_reconnect() calls Pop3ClientBuilder::connect() requiring real TCP, not unit-testable
+- [Phase 07-02]: Best-effort quit silently swallows retryable errors — only non-transient errors propagate from ReconnectingClient::quit()
+- [Phase 08-connection-pooling]: bb8 added with default-features=false to disable parking_lot (dlltool.exe Windows GNU constraint)
+- [Phase 08-connection-pooling]: Pop3PoolError separate from Pop3Error — pool-level errors conceptually distinct from POP3 protocol errors
+- [Phase 08-connection-pooling]: is_valid() returns conn.noop() directly — avoids redundant async block and lifetime annotation issues
+- [Phase 08-connection-pooling]: std::sync::RwLock used for pool registry (not tokio RwLock) — never held across await, allows synchronous add_account/remove_account
+- [Phase 08-connection-pooling]: checkout() uses get_owned() returning PooledConnection<'static> — Arc cloned before lock released, allowing 'static lifetime without holding read lock across await
+- [Phase 08-connection-pooling]: #[tokio::test] required for tests calling add_account — bb8 build_unchecked starts internal Tokio interval timer requiring runtime context
+- [Phase 09-01]: ParsedMessage = mail_parser::Message<'static> type alias — exposes full mail-parser API directly, no wrapping
+- [Phase 09-01]: MimeParse error variant is unconditional (not feature-gated) — enables exhaustive matching regardless of mime feature activation
+- [10-01]: Double-login guard uses client.state() != SessionState::Authenticated — idiomatic, leverages existing SessionState enum
+- [10-01]: Three stale #[allow(dead_code)] removed; two legitimate ones preserved (Upgrading variant, no-TLS connect_tls stub)
 
 ### Pending Todos
 
@@ -150,6 +298,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-02
-Stopped at: Completed 05-02-PLAN.md — CAPA-based pipelining detection in login/apop, supports_pipelining() accessor, retr_many/dele_many batch methods with windowed pipelining (PIPELINE_WINDOW=4) and sequential fallback, 124 unit + 2 integration + 27 doc tests passing, clippy and fmt clean. Phase 5 complete. Ready for Phase 6 (UIDL Caching).
+Last session: 2026-03-01
+Stopped at: Completed 10-01-PLAN.md — removed stale #[allow(dead_code)] from transport.rs, all plan-phase references removed, double-login guard added to Pop3ConnectionManager::connect() with SessionState check, auth rustdoc, and unit test. Phase 10 complete. ALL PHASES COMPLETE (10 total).
 Resume file: None

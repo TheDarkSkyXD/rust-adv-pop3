@@ -21,9 +21,9 @@ pub(crate) enum InnerStream {
     OpensslTls(tokio_openssl::SslStream<TcpStream>),
     #[cfg(test)]
     Mock(tokio_test::io::Mock),
-    /// Temporary placeholder during STARTTLS upgrade (Plan 02). Never performs real I/O;
-    /// this variant exists only transiently inside upgrade_in_place and is immediately
-    /// replaced by the TLS variant before the method returns.
+    /// Temporary placeholder during STARTTLS upgrade. Never performs real I/O;
+    /// this variant exists only transiently inside `upgrade_in_place` and is
+    /// immediately replaced by the TLS variant before the method returns.
     #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
     #[allow(dead_code)]
     Upgrading,
@@ -262,7 +262,6 @@ impl Transport {
     /// original `TcpStream` via `unsplit()`, performs a TLS handshake, then
     /// rebuilds `reader` and `writer` with the new TLS stream.
     #[cfg(any(feature = "rustls-tls", feature = "openssl-tls"))]
-    #[allow(dead_code)] // Used in Plan 02 (STARTTLS) — not yet called from client.rs
     pub(crate) async fn upgrade_in_place(&mut self, hostname: &str) -> Result<()> {
         let pending = self.reader.buffer().len();
         if pending > 0 {
@@ -307,7 +306,6 @@ impl Transport {
     }
 
     #[cfg(feature = "rustls-tls")]
-    #[allow(dead_code)] // Used by upgrade_in_place (Plan 02)
     async fn tls_handshake(tcp_stream: TcpStream, hostname: &str) -> Result<InnerStream> {
         use std::sync::Arc;
         use tokio_rustls::rustls::{ClientConfig, RootCertStore};
@@ -339,7 +337,6 @@ impl Transport {
     }
 
     #[cfg(feature = "openssl-tls")]
-    #[allow(dead_code)] // Used by upgrade_in_place (Plan 02)
     async fn tls_handshake(tcp_stream: TcpStream, hostname: &str) -> Result<InnerStream> {
         use openssl::ssl::{SslConnector, SslMethod};
         use tokio_openssl::SslStream;

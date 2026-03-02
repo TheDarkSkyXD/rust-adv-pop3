@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::error::{Pop3Error, Result};
@@ -942,6 +943,206 @@ impl Pop3Client {
         Ok(())
     }
 
+    // -------------------------------------------------------------------------
+    // Incremental Sync
+    // -------------------------------------------------------------------------
+
+    /// # Incremental Sync
+    ///
+    /// These methods provide a high-level API for incremental mailbox sync.
+    /// They operate on a caller-managed set of previously-seen unique IDs (UIDs).
+    /// The library never persists the seen set — that responsibility belongs to
+    /// the caller.
+    ///
+    /// **UIDL requirement:** All three methods use the `UIDL` command internally.
+    /// UIDL is optional in RFC 1939. If the server does not support it, these
+    /// methods return a `Pop3Error::ServerError`. Check `capa()` for the `UIDL`
+    /// capability if you need to verify support before calling.
+    /// Return UIDL entries for messages not in `seen`.
+    ///
+    /// Calls `UIDL` once and filters the result against the caller-supplied seen
+    /// set. Returns full [`UidlEntry`] values so callers have both the session
+    /// message number (`message_id`) and the stable unique ID (`unique_id`).
+    ///
+    /// # Errors
+    ///
+    /// - [`Pop3Error::NotAuthenticated`] — client has not logged in
+    /// - [`Pop3Error::ServerError`] — server does not support `UIDL`
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    /// use std::collections::HashSet;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///
+    ///     let seen: HashSet<String> = HashSet::new(); // load from persistence in practice
+    ///     let new_entries = client.unseen_uids(&seen).await?;
+    ///     for entry in &new_entries {
+    ///         println!("New message {}: UID {}", entry.message_id, entry.unique_id);
+    ///     }
+    ///
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn unseen_uids(&mut self, seen: &HashSet<String>) -> Result<Vec<UidlEntry>> {
+        let all = self.uidl(None).await?;
+        Ok(all
+            .into_iter()
+            .filter(|entry| !seen.contains(&entry.unique_id))
+            .collect())
+    }
+
+    /// Fetch full message content for messages not in `seen`.
+    ///
+    /// Calls [`unseen_uids`](Self::unseen_uids) to determine which messages are
+    /// new, then retrieves each one sequentially. Returns tuples of
+    /// `(UidlEntry, Message)` so callers can immediately add `entry.unique_id`
+    /// to their seen set after processing.
+    ///
+    /// This method does **not** mutate `seen` — the caller updates the set after
+    /// deciding which messages to mark as processed.
+    ///
+    /// Fails fast on the first retrieval error. No partial results are returned.
+    ///
+    /// # Errors
+    ///
+    /// - [`Pop3Error::NotAuthenticated`] — client has not logged in
+    /// - [`Pop3Error::ServerError`] — server does not support `UIDL`
+    /// - Any error from `RETR` for a specific message (propagated immediately)
+    ///
+    /// # Performance
+    ///
+    /// This method retrieves messages sequentially (one `RETR` per message). For
+    /// higher throughput on servers that advertise `PIPELINING`, use
+    /// [`unseen_uids`](Self::unseen_uids) to get the entry list, then pass the
+    /// message IDs to [`retr_many`](Self::retr_many) manually.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    /// use std::collections::HashSet;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///
+    ///     // In practice, load `seen` from disk (e.g. serde_json::from_str).
+    ///     let mut seen: HashSet<String> = HashSet::new();
+    ///
+    ///     let new_messages = client.fetch_unseen(&seen).await?;
+    ///     for (entry, msg) in &new_messages {
+    ///         println!("Message {}: {} bytes", entry.unique_id, msg.data.len());
+    ///         seen.insert(entry.unique_id.clone()); // update seen set
+    ///     }
+    ///
+    ///     // Persist `seen` back to disk (e.g. serde_json::to_string(&seen)).
+    ///
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn fetch_unseen(
+        &mut self,
+        seen: &HashSet<String>,
+    ) -> Result<Vec<(UidlEntry, Message)>> {
+        let new_entries = self.unseen_uids(seen).await?;
+        let mut results = Vec::with_capacity(new_entries.len());
+        for entry in new_entries {
+            let msg = self.retr(entry.message_id).await?;
+            results.push((entry, msg));
+        }
+        Ok(results)
+    }
+
+    /// Remove UIDs from `seen` that no longer exist on the server.
+    ///
+    /// Calls `UIDL` to fetch the server's current message list, then removes
+    /// any entry from `seen` whose UID is not present on the server. This
+    /// prevents ghost UIDs (from deleted or expired messages) from accumulating
+    /// in the seen set and incorrectly marking new messages as already-seen.
+    ///
+    /// Returns the list of pruned UIDs for logging or auditing. Mutates `seen`
+    /// in place.
+    ///
+    /// Call this after connecting and authenticating, before calling
+    /// [`fetch_unseen`](Self::fetch_unseen), to keep the seen set accurate.
+    ///
+    /// # UID Stability Caveat
+    ///
+    /// RFC 1939 says servers SHOULD NOT reuse UIDs, but does not mandate it.
+    /// This method assumes UID stability. A pathological server that reuses a
+    /// deleted UID for a new message would cause `prune_seen` to retain the old
+    /// UID, making the new message appear already-seen. This matches the
+    /// behavior of all major POP3 clients.
+    ///
+    /// # Errors
+    ///
+    /// - [`Pop3Error::NotAuthenticated`] — client has not logged in
+    /// - [`Pop3Error::ServerError`] — server does not support `UIDL`
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pop3::Pop3Client;
+    /// use std::collections::HashSet;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> pop3::Result<()> {
+    ///     let mut client = Pop3Client::connect_default("pop.example.com:110").await?;
+    ///     client.login("user", "pass").await?;
+    ///
+    ///     // Load seen set from persistent storage.
+    ///     // Example round-trip with serde_json (not a library dependency):
+    ///     //   let json = std::fs::read_to_string("seen.json").unwrap_or_default();
+    ///     //   let mut seen: HashSet<String> = serde_json::from_str(&json).unwrap_or_default();
+    ///     let mut seen: HashSet<String> = HashSet::new();
+    ///
+    ///     // Prune UIDs that no longer exist on the server.
+    ///     let pruned = client.prune_seen(&mut seen).await?;
+    ///     if !pruned.is_empty() {
+    ///         println!("Pruned {} ghost UIDs: {:?}", pruned.len(), pruned);
+    ///     }
+    ///
+    ///     // Fetch only new messages.
+    ///     let new_messages = client.fetch_unseen(&seen).await?;
+    ///     for (entry, _msg) in &new_messages {
+    ///         seen.insert(entry.unique_id.clone());
+    ///     }
+    ///
+    ///     // Persist seen set back to storage.
+    ///     //   let json = serde_json::to_string(&seen).unwrap();
+    ///     //   std::fs::write("seen.json", json).unwrap();
+    ///
+    ///     client.quit().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn prune_seen(&mut self, seen: &mut HashSet<String>) -> Result<Vec<String>> {
+        let server_entries = self.uidl(None).await?;
+        let server_uids: HashSet<&str> = server_entries
+            .iter()
+            .map(|e| e.unique_id.as_str())
+            .collect();
+        let mut pruned = Vec::new();
+        seen.retain(|uid| {
+            if server_uids.contains(uid.as_str()) {
+                true
+            } else {
+                pruned.push(uid.clone());
+                false
+            }
+        });
+        Ok(pruned)
+    }
+
     /// Send a no-op command to keep the connection alive.
     ///
     /// Useful for long-lived connections where the server may time out idle
@@ -1074,6 +1275,130 @@ impl Pop3Client {
         } else {
             Ok(())
         }
+    }
+}
+
+// ── MIME integration (requires `mime` feature) ──────────────────────────
+
+#[cfg(feature = "mime")]
+impl Pop3Client {
+    /// Retrieve a message and parse it as a structured RFC 5322 / MIME object.
+    ///
+    /// Calls [`retr()`](Self::retr) internally, then feeds the raw bytes to
+    /// `mail-parser` for structured parsing.  Returns an owned
+    /// [`ParsedMessage`](crate::ParsedMessage) with no lifetime ties to the
+    /// client.
+    ///
+    /// # Errors
+    ///
+    /// - Any error that [`retr()`](Self::retr) can return (I/O, protocol,
+    ///   authentication).
+    /// - [`Pop3Error::MimeParse`] if the retrieved content cannot be parsed as
+    ///   a valid RFC 5322 message (e.g., no recognizable headers).  This means
+    ///   the network retrieval succeeded, but the content is not a valid email.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "mime")]
+    /// # async fn example() -> pop3::Result<()> {
+    /// use pop3::Pop3Client;
+    ///
+    /// let mut client = Pop3Client::connect(
+    ///     ("pop.example.com", 110),
+    ///     std::time::Duration::from_secs(30),
+    /// ).await?;
+    /// client.login("user", "pass").await?;
+    ///
+    /// let msg = client.retr_parsed(1).await?;
+    /// println!("Subject: {:?}", msg.subject());
+    /// println!("From: {:?}", msg.from());
+    /// println!("Body: {:?}", msg.body_text(0));
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn retr_parsed(
+        &mut self,
+        message_id: u32,
+    ) -> crate::Result<mail_parser::Message<'static>> {
+        let msg = self.retr(message_id).await?;
+        mail_parser::MessageParser::default()
+            .parse(msg.data.as_bytes())
+            .map(|m| m.into_owned())
+            .ok_or_else(|| {
+                Pop3Error::MimeParse(format!(
+                    "message {message_id} could not be parsed as RFC 5322"
+                ))
+            })
+    }
+
+    /// Retrieve message headers (and optionally N body lines) and parse them
+    /// as a structured RFC 5322 / MIME object.
+    ///
+    /// Calls [`top()`](Self::top) internally, then feeds the raw bytes to
+    /// `mail-parser`.
+    ///
+    /// **Note:** The TOP command returns all headers but only the first `lines`
+    /// lines of the message body (RFC 1939 Section 7).  The parsed message's
+    /// body may therefore be truncated or empty.  Use [`retr_parsed()`](Self::retr_parsed)
+    /// for the complete message.
+    ///
+    /// # Errors
+    ///
+    /// - Any error that [`top()`](Self::top) can return (I/O, protocol,
+    ///   authentication).
+    /// - [`Pop3Error::MimeParse`] if the retrieved content cannot be parsed as
+    ///   a valid RFC 5322 message.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "mime")]
+    /// # async fn example() -> pop3::Result<()> {
+    /// use pop3::Pop3Client;
+    ///
+    /// let mut client = Pop3Client::connect(
+    ///     ("pop.example.com", 110),
+    ///     std::time::Duration::from_secs(30),
+    /// ).await?;
+    /// client.login("user", "pass").await?;
+    ///
+    /// // Retrieve headers + first 0 body lines (headers only)
+    /// let msg = client.top_parsed(1, 0).await?;
+    /// println!("Subject: {:?}", msg.subject());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn top_parsed(
+        &mut self,
+        message_id: u32,
+        lines: u32,
+    ) -> crate::Result<mail_parser::Message<'static>> {
+        let msg = self.top(message_id, lines).await?;
+        mail_parser::MessageParser::default()
+            .parse(msg.data.as_bytes())
+            .map(|m| m.into_owned())
+            .ok_or_else(|| {
+                Pop3Error::MimeParse(format!(
+                    "message {message_id} could not be parsed as RFC 5322"
+                ))
+            })
+    }
+}
+
+/// Create an authenticated mock Pop3Client for use in tests outside this module.
+///
+/// This is the `pub(crate)` counterpart to the module-private
+/// `build_authenticated_test_client` helper. Used by reconnect.rs tests to
+/// inject a mock Pop3Client into ReconnectingClient::new_for_test.
+#[cfg(test)]
+pub(crate) fn build_authenticated_mock_client(mock: tokio_test::io::Mock) -> Pop3Client {
+    let transport = Transport::mock(mock);
+    Pop3Client {
+        transport,
+        greeting: String::new(),
+        state: SessionState::Authenticated,
+        is_pipelining: false,
     }
 }
 
@@ -2271,5 +2596,357 @@ mod tests {
         let mock = Builder::new().build();
         let client = build_test_client(mock);
         assert!(!client.supports_pipelining());
+    }
+
+    // =========================================================================
+    // Incremental Sync: unseen_uids
+    // =========================================================================
+
+    #[tokio::test]
+    async fn unseen_uids_returns_all_when_seen_is_empty() {
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b"1 abc123\r\n")
+            .read(b"2 def456\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let seen: HashSet<String> = HashSet::new();
+        let result = client.unseen_uids(&seen).await.unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].unique_id, "abc123");
+        assert_eq!(result[1].unique_id, "def456");
+    }
+
+    #[tokio::test]
+    async fn unseen_uids_filters_seen_entries() {
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b"1 abc123\r\n")
+            .read(b"2 def456\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let seen: HashSet<String> = ["abc123".to_string()].into();
+        let result = client.unseen_uids(&seen).await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].unique_id, "def456");
+        assert_eq!(result[0].message_id, 2);
+    }
+
+    #[tokio::test]
+    async fn unseen_uids_returns_empty_when_all_seen() {
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b"1 abc123\r\n")
+            .read(b"2 def456\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let seen: HashSet<String> = ["abc123".to_string(), "def456".to_string()].into();
+        let result = client.unseen_uids(&seen).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unseen_uids_empty_mailbox_returns_empty() {
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let seen: HashSet<String> = HashSet::new();
+        let result = client.unseen_uids(&seen).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unseen_uids_requires_auth() {
+        let mock = Builder::new().build();
+        let mut client = build_test_client(mock);
+        let seen: HashSet<String> = HashSet::new();
+        let result = client.unseen_uids(&seen).await;
+        assert!(matches!(result, Err(Pop3Error::NotAuthenticated)));
+    }
+
+    // =========================================================================
+    // Incremental Sync: fetch_unseen
+    // =========================================================================
+
+    #[tokio::test]
+    async fn fetch_unseen_returns_new_messages_with_entries() {
+        let mock = Builder::new()
+            // unseen_uids -> uidl(None)
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b"1 abc123\r\n")
+            .read(b"2 def456\r\n")
+            .read(b".\r\n")
+            // retr(2) -- only def456 is unseen
+            .write(b"RETR 2\r\n")
+            .read(b"+OK\r\n")
+            .read(b"From: test@example.com\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let seen: HashSet<String> = ["abc123".to_string()].into();
+        let result = client.fetch_unseen(&seen).await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0.unique_id, "def456");
+        assert_eq!(result[0].0.message_id, 2);
+        assert!(result[0].1.data.contains("From: test@example.com"));
+    }
+
+    #[tokio::test]
+    async fn fetch_unseen_empty_when_all_seen() {
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b"1 abc123\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let seen: HashSet<String> = ["abc123".to_string()].into();
+        let result = client.fetch_unseen(&seen).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn fetch_unseen_does_not_mutate_seen() {
+        // fetch_unseen takes &HashSet<String> -- can only be verified by type, but
+        // we confirm the seen set is unchanged from the caller's perspective by
+        // checking the count before and after (structural test).
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b"1 abc123\r\n")
+            .read(b"2 def456\r\n")
+            .read(b".\r\n")
+            .write(b"RETR 2\r\n")
+            .read(b"+OK\r\n")
+            .read(b"body\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let seen: HashSet<String> = ["abc123".to_string()].into();
+        let before_len = seen.len();
+        let _ = client.fetch_unseen(&seen).await.unwrap();
+        // seen is unchanged -- fetch_unseen only takes &HashSet (immutable borrow)
+        assert_eq!(seen.len(), before_len);
+    }
+
+    #[tokio::test]
+    async fn fetch_unseen_fails_fast_on_retr_error() {
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b"1 abc123\r\n")
+            .read(b"2 def456\r\n")
+            .read(b".\r\n")
+            // retr(1) succeeds
+            .write(b"RETR 1\r\n")
+            .read(b"+OK\r\n")
+            .read(b"body of 1\r\n")
+            .read(b".\r\n")
+            // retr(2) fails -- server returns -ERR
+            .write(b"RETR 2\r\n")
+            .read(b"-ERR no such message\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let seen: HashSet<String> = HashSet::new();
+        // fetch_unseen propagates the error immediately; no partial results
+        let result = client.fetch_unseen(&seen).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn fetch_unseen_requires_auth() {
+        let mock = Builder::new().build();
+        let mut client = build_test_client(mock);
+        let seen: HashSet<String> = HashSet::new();
+        let result = client.fetch_unseen(&seen).await;
+        assert!(matches!(result, Err(Pop3Error::NotAuthenticated)));
+    }
+
+    // =========================================================================
+    // Incremental Sync: prune_seen
+    // =========================================================================
+
+    #[tokio::test]
+    async fn prune_seen_removes_ghost_uids() {
+        // Server only has message 2 (def456); abc123 is a ghost
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b"2 def456\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let mut seen: HashSet<String> = ["abc123".to_string(), "def456".to_string()].into();
+        let pruned = client.prune_seen(&mut seen).await.unwrap();
+        assert!(!seen.contains("abc123"), "ghost uid should be pruned");
+        assert!(seen.contains("def456"), "live uid should be retained");
+        assert_eq!(pruned.len(), 1);
+        assert_eq!(pruned[0], "abc123");
+    }
+
+    #[tokio::test]
+    async fn prune_seen_returns_empty_when_no_ghosts() {
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b"1 abc123\r\n")
+            .read(b"2 def456\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let mut seen: HashSet<String> = ["abc123".to_string()].into();
+        let pruned = client.prune_seen(&mut seen).await.unwrap();
+        assert!(pruned.is_empty());
+        assert!(seen.contains("abc123"));
+    }
+
+    #[tokio::test]
+    async fn prune_seen_empties_seen_when_server_is_empty() {
+        // Server has no messages at all
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let mut seen: HashSet<String> = ["abc123".to_string(), "def456".to_string()].into();
+        let pruned = client.prune_seen(&mut seen).await.unwrap();
+        assert!(
+            seen.is_empty(),
+            "all uids should be pruned when server has no messages"
+        );
+        assert_eq!(pruned.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn prune_seen_empty_seen_is_noop() {
+        let mock = Builder::new()
+            .write(b"UIDL\r\n")
+            .read(b"+OK\r\n")
+            .read(b"1 abc123\r\n")
+            .read(b".\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let mut seen: HashSet<String> = HashSet::new();
+        let pruned = client.prune_seen(&mut seen).await.unwrap();
+        assert!(pruned.is_empty());
+        assert!(seen.is_empty());
+    }
+
+    #[tokio::test]
+    async fn prune_seen_requires_auth() {
+        let mock = Builder::new().build();
+        let mut client = build_test_client(mock);
+        let mut seen: HashSet<String> = HashSet::new();
+        let result = client.prune_seen(&mut seen).await;
+        assert!(matches!(result, Err(Pop3Error::NotAuthenticated)));
+    }
+
+    #[cfg(feature = "mime")]
+    #[tokio::test]
+    async fn retr_parsed_returns_structured_message() {
+        let mock = Builder::new()
+            .write(b"RETR 1\r\n")
+            .read(
+                b"+OK\r\n\
+From: alice@example.com\r\n\
+To: bob@example.com\r\n\
+Subject: Hello\r\n\
+Date: Mon, 1 Jan 2024 12:00:00 +0000\r\n\
+\r\n\
+Body text\r\n\
+.\r\n",
+            )
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let parsed = client.retr_parsed(1).await.unwrap();
+        assert_eq!(parsed.subject(), Some("Hello"));
+        assert!(parsed.body_text(0).is_some());
+    }
+
+    #[cfg(feature = "mime")]
+    #[tokio::test]
+    async fn retr_parsed_returns_mime_error_for_malformed_message() {
+        // Completely empty body (no blank line, just the dot terminator) -- mail-parser
+        // returns None only for zero-length input; "+OK\r\n.\r\n" produces data = ""
+        let mock = Builder::new()
+            .write(b"RETR 1\r\n")
+            .read(b"+OK\r\n.\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let result = client.retr_parsed(1).await;
+        assert!(matches!(result, Err(Pop3Error::MimeParse(ref msg)) if msg.contains("message 1")));
+    }
+
+    #[cfg(feature = "mime")]
+    #[tokio::test]
+    async fn top_parsed_returns_structured_headers() {
+        let mock = Builder::new()
+            .write(b"TOP 1 0\r\n")
+            .read(
+                b"+OK\r\n\
+From: alice@example.com\r\n\
+Subject: Headers Only\r\n\
+\r\n\
+.\r\n",
+            )
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let parsed = client.top_parsed(1, 0).await.unwrap();
+        assert_eq!(parsed.subject(), Some("Headers Only"));
+    }
+
+    #[cfg(feature = "mime")]
+    #[tokio::test]
+    async fn retr_parsed_handles_multipart_mime() {
+        let mock = Builder::new()
+            .write(b"RETR 2\r\n")
+            .read(
+                b"+OK\r\n\
+From: alice@example.com\r\n\
+Subject: MIME test\r\n\
+Content-Type: multipart/alternative; boundary=\"boundary42\"\r\n\
+\r\n\
+--boundary42\r\n\
+Content-Type: text/plain\r\n\
+\r\n\
+Plain text body\r\n\
+--boundary42\r\n\
+Content-Type: text/html\r\n\
+\r\n\
+<html><body>HTML body</body></html>\r\n\
+--boundary42--\r\n\
+.\r\n",
+            )
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let parsed = client.retr_parsed(2).await.unwrap();
+        assert_eq!(parsed.subject(), Some("MIME test"));
+        assert!(parsed.body_text(0).is_some());
+        assert!(parsed.body_html(0).is_some());
+    }
+
+    #[cfg(feature = "mime")]
+    #[tokio::test]
+    async fn top_parsed_returns_mime_error_for_garbage() {
+        // Completely empty body (no blank line, just the dot terminator) -- mail-parser
+        // returns None only for zero-length input; "+OK\r\n.\r\n" produces data = ""
+        let mock = Builder::new()
+            .write(b"TOP 3 5\r\n")
+            .read(b"+OK\r\n.\r\n")
+            .build();
+        let mut client = build_authenticated_test_client(mock);
+        let result = client.top_parsed(3, 5).await;
+        assert!(matches!(result, Err(Pop3Error::MimeParse(ref msg)) if msg.contains("message 3")));
     }
 }

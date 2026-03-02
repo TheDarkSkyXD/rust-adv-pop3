@@ -54,6 +54,18 @@ jobs:
       - name: Test
         run: cargo test --no-default-features
 
+  test-mime:
+    name: Test (rustls-tls + mime)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --no-default-features --features rustls-tls,mime
+      - name: Doc tests
+        run: cargo test --doc --no-default-features --features rustls-tls,mime
+
   fmt:
     name: Format
     runs-on: ubuntu-latest
